@@ -1,82 +1,78 @@
 from z3 import *
 from copy import deepcopy
 import re
-from mythril.solidnotary.z3utility import are_satisfiable, simplify_constraints
+from mythril.solidnotary.z3utility import are_satisfiable, simplify_constraints, simplify_z3_constraints, \
+    extract_sym_names, filter_for_t_variable_data
+from mythril.solidnotary.z3wrapper import Slot, Constraint
 
-"""
-    Returns whether or the specified symbolic string stands for a data value that can be different from transaction to 
-    transaction without the need of an intermediate call to the contract (e.g. a transaction params, blocknumber, ...)
-"""
+simp_and_sat = False
 
 
-def is_t_variable(var):
-    var = str(var)
-    if (var.startswith("caller")
-        or var.startswith("gasprice")
-        or var.startswith("callvalue")
-        or var.startswith("origin")
-        or var.startswith("calldata_")
-        or var.startswith("calldatasize_")
-        or var.startswith("balance_at")
-        or var.startswith("KECCAC_mem_")
-        or var.startswith("keccac_")
-        or var.startswith("gasprice")
-        or var.startswith("extcodesize")
-        or var.startswith("returndatasize")
-        # or var.startswith(var, "blockhash_block_") should not change between transactions
-        or var.startswith("coinbase")
-        or var.startswith("timestamp")
-        or var.startswith("block_number")
-        or var.startswith("block_difficulty")
-        or var.startswith("block_gaslimit")
-        or var.startswith("mem_")
-        or var.startswith("msize")
-        or var.startswith("gas")
-        or var.startswith("retval_")
-        or var.startswith("keccac_")):
-        return True
+def deep_bitvec_substitute(obj, subs_map):
+    if (not hasattr(obj, 'children') or len(obj.children()) == 0) and type(obj) == BitVecRef and hasattr(obj, 'decl') :
+            return [str(obj.decl())]
     else:
-        return False
+        sym_vars = []
+        for c in obj.children():
+            if (not hasattr(obj, 'children') or len(obj.children()) == 0) and type(c) == BitVecRef and hasattr(obj, 'decl'):
+                pass
+            else:
+                sym_vars.extend(deep_bitvec_substitute(c, subs_map))
+        return sym_vars
 
 # Todo constructor mit den intentet initvalues versorgen
 
 
-def filter_for_t_variable_data(sym_vars):
-    return list(filter(lambda x: is_t_variable(x), sym_vars))
+
+def flatten(list_to_flatten):
+    return [item for sublist in list_to_flatten for item in sublist]
 
 class TransactionTrace:
 
     def __init__(self, storage, constraints, lvl=1):
         self.storage = deepcopy(storage) # Todo give all non storage symbolic values that can be different every transaction the number one
-        self.constraints = constraints # Todo eliminate all constraints that are not regarding the beginning of the transaction may not be necessary
+        self.constraints = constraints
         # eliminate all constraints that only contain names not in the set of names from storage
-        self.constraints = simplify_constraints(self.constraints) # Todo simplification of the sum of constraints
-        self.tran_constraints = deepcopy(self.constraints) # Todo minimize them if they do not involve outside symb variables
+        self.constraints = simplify_z3_constraints(self.constraints) # Todo simplification of the sum of constraints
+
+        # Or hook transformation in here
+        self.storage = {s_name: Slot(s_name, z3_vars) for (s_name, z3_vars) in self.storage.items()}
+        self.constraints = [Constraint(constraint) for constraint in self.constraints]
+
+        self.tran_constraints = deepcopy(self.constraints)
         self.lvl = lvl
-        self.sym_names = self.extract_sym_names_from_storage()
-        self.sym_names.extend(self.extract_sym_names_from_constraints())
+        self.sym_names = flatten(self.extract_sym_names_from_storage())
+
+        # Constraints on storage keys to are necessary
+        self.tran_constraints = [tra_const for tra_const in self.tran_constraints if tra_const.slot_names]
+        #self.tran_constraints = list(filter(lambda c: any([name in (self.sym_names + ["storage_" + str(s_key) for
+        #    s_key, _ in self.storage.items()]) for name in extract_sym_names(c)]), self.tran_constraints))
+
+        # Transformation
+        #self.storage = {s_name: Slot(s_name, z3_vars) for (s_name, z3_vars) in self.storage.items()}
+        #self.tran_constraints = [Constraint(constraint) for constraint in self.tran_constraints]
+
+        self.sym_names.extend(flatten(self.extract_sym_names_from_constraints()))
         if lvl == 1:
             self.set_transaction_idx()
-
-        # Todo the constraints of a trace are probably also important here and have to be somehow aggregated
-        # Todo Identifiy addional trace information such as blocknumber and more
 
     def __str__(self):
         return str(self.as_dict())
 
     def as_dict(self):
 
-        return {'lvl': self.lvl, 'storage': str(self.storage), 'constraints': str(self.constraints)}
+        return {'lvl': self.lvl, 'storage': str({s_name: slot.slot for s_name, slot in self.storage}),
+                'tran_constraints': str([const.constraint for const in self.tran_constraints])}
 
     def pp_trace(self):
         print()
         print("Trace lvl: {}".format(self.lvl))
-        print("Storage: {}".format({k: str(v).replace("\n", " ") for k, v in self.storage.items()}))
-        print("Constraints: {}".format(list(map(lambda x: str(x).replace("\n", " "), self.constraints))))
+        print("Storage: {}".format({k: str(v.slot).replace("\n", " ") for k, v in self.storage.items()}))
+        print("Tran_constraints: {}".format(list(map(lambda x: str(x.constraint).replace("\n", " "), self.tran_constraints))))
         print()
 
-
-    def add_transaction_idx(self, offset):
+    def add_transaction_idx(self, offset):# Delete if no error shows
+        pass
         new_names = []
         for name in self.sym_names:
             matched_name = re.search(r't([0-9]+)(_.*)', name)
@@ -88,6 +84,19 @@ class TransactionTrace:
 
         self.sym_names = new_names
 
+    def get_transaction_depth_repl_tuples(self, offset):
+        new_names = []
+        for name in self.sym_names:
+            matched_name = re.search(r't([0-9]+)(_.*)', name)
+            num = int(matched_name.group(1)) + offset
+            new_names.append("t" + str(num) + matched_name.group(2))
+        repl_tup = list(zip(self.sym_names, new_names))
+
+        # self.substitute_bv_names(repl_tup)
+
+        self.sym_names = new_names
+        return repl_tup
+
     def set_transaction_idx(self):
         repl_tup = []
         new_sym_names = []
@@ -97,32 +106,37 @@ class TransactionTrace:
         self.sym_names = new_sym_names
         self.substitute_bv_names(repl_tup)
 
+    # Todo merge this (transaction depth add) subs with the other(storage slot) subs
+
     def substitute_bv_names(self, subs_tuple):
-        subs_tuples = list(map(lambda name_t: (BitVec(name_t[0], 256), BitVec(name_t[1], 256)), subs_tuple))
-        for s_num, slot in self.storage.items():
-            self.storage[s_num] = substitute(slot, subs_tuples)
-        for c_idx in range(len(self.constraints)):
-            self.constraints[c_idx] = substitute(self.constraints[c_idx], subs_tuples)
-
-    def extract_sym_names(self, obj):
-        if (not hasattr(obj, 'children') or len(obj.children()) == 0) and hasattr(obj, 'decl') :
-                return [str(obj.decl())]
-        else:
-            sym_vars = []
-            for c in obj.children():
-                sym_vars.extend(self.extract_sym_names(c))
-            return sym_vars
-
-    def extract_sym_names_from_constraints(self):
-        sym_names = []
-        for k,v in self.storage.items():
-            sym_names.extend(self.extract_sym_names(v))
-        return filter_for_t_variable_data(sym_names)
+        subs_tuples = list(map(lambda name_t: (name_t[0], BitVec(name_t[1], 256), ([name_t[0]], [])), subs_tuple))
+        for s_num, _ in self.storage.items():
+            self.storage[s_num].substitute(subs_tuples)
+        for c_idx in range(len(self.tran_constraints)):
+            self.tran_constraints[c_idx].substitute(subs_tuples)
 
     def extract_sym_names_from_storage(self):
+        return [slot.sym_names for _, slot in self.storage.items()]
         sym_names = []
-        for v in self.constraints:
-            sym_names.extend(self.extract_sym_names(v))
+        sum = 0
+        for k,v in self.storage.items():
+            vs_sym_names = extract_sym_names(v)
+            sym_names.extend(vs_sym_names)
+            if vs_sym_names:
+                sum += 1
+        print("Extracted sym storage: " + str(sum) + " " + str( float(len(self.storage) - sum) / len(self.storage)))
+        return filter_for_t_variable_data(sym_names)
+
+    def extract_sym_names_from_constraints(self):
+        return [const.sym_names for const in self.constraints]
+        sym_names = []
+        sum = 0
+        for v_idx in range(len(self.tran_constraints)):
+            vs_sym_names = extract_sym_names(self.tran_constraints[v_idx])
+            sym_names.extend(vs_sym_names)
+            if vs_sym_names:
+                sum += 1
+        print("Extracted sym constraints: " + str(sum) + " " + str( float(len(self.storage) - sum) / len(self.storage)))
         return filter_for_t_variable_data(sym_names) # Todo Check whether here it is the right choice too, to filter ...
 
     """
@@ -137,7 +151,7 @@ class TransactionTrace:
         for k,v in self.storage.items():
             # Todo explore the arguments of this storage simplification in z3 to find ways to further simplify and to
             # sort this expressions for equality comparison
-            self.storage[k] = simplify(v)
+            self.storage[k].simplify()
 
     """
         Applies the new trace tt on a possibly even changed trace self.
@@ -146,22 +160,33 @@ class TransactionTrace:
         if tt is None:
             return self
         new_trace = deepcopy(tt)
-        new_trace.add_transaction_idx(self.lvl)
-        subs_map = list(map(lambda x: (BitVec("storage_" + str(x[0]), 256), x[1]), self.storage.items()))
+        subs_map = list(map(lambda x: (x[0], BitVec(x[1], 256), ([x[1]], [])), new_trace.get_transaction_depth_repl_tuples(self.lvl)))
+
+        subs_map.extend(list(map(lambda x: ("storage_" + str(x[0]), x[1].slot, (x[1].sym_names, x[1].slot_names)), self.storage.items()))) # Build this map only once
+
         for k,v in new_trace.storage.items():
-            new_trace.storage[k] = substitute(v, subs_map)
-        for c_idx in range(len(new_trace.constraints)):
-            new_trace.constraints[c_idx] = substitute(new_trace.constraints[c_idx], subs_map)
+            new_trace.storage[k].substitute(subs_map)  # Todo substitute only if necessary
+
+        # Copies all storage entries that are not changed in the newer trace
+        for k in self.storage.keys():
+            if k not in new_trace.storage:
+                new_trace.storage[k] = deepcopy(self.storage[k])
+
+        for c_idx in range(len(new_trace.tran_constraints)):
+            new_trace.tran_constraints[c_idx].substitute(subs_map) # Todo only substitute if necessary
         new_trace.lvl += self.lvl
         new_trace.sym_names.extend(deepcopy(self.sym_names))
         # self can be omitted (e.g. when related storage locations were overwritten)
-        new_trace.simplify_storage()
-        new_trace.constraints = simplify_constraints(new_trace.constraints)
-        # Simplify constraints in there sum to eliminate subconstraints
-        if are_satisfiable(new_trace.constraints):
-            return new_trace
+        if simp_and_sat:
+            new_trace.simplify_storage()
+            new_trace.tran_constraints = simplify_constraints(new_trace.tran_constraints)
+            # Simplify constraints in there sum to eliminate subconstraints
+            if are_satisfiable(new_trace.tran_constraints):
+                return new_trace
+            else:
+                return None
         else:
-            return None
+            return new_trace
 
     def apply_traces_parallel(self, traces):
         combined_traces = []

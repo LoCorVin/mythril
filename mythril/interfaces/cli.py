@@ -9,6 +9,7 @@ import logging
 import json
 import sys
 import argparse
+from mythril.solidnotary.annotation_runner import check_annotations
 
 # logging.basicConfig(level=logging.DEBUG)
 
@@ -33,6 +34,9 @@ def main():
     commands.add_argument('-g', '--graph', help='generate a control flow graph')
     commands.add_argument('-x', '--fire-lasers', action='store_true',
                           help='detect vulnerabilities, use with -c, -a or solidity file(s)')
+
+    commands.add_argument('-n', '--annotations', action='store_true',
+                          help='detect broken annotations, used with solidity file(s)')
     commands.add_argument('-t', '--truffle', action='store_true',
                           help='analyze a truffle project (run from project dir)')
     commands.add_argument('-d', '--disassemble', action='store_true', help='print disassembly')
@@ -88,7 +92,7 @@ def main():
 
     # Parse cmdline args
 
-    if not (args.search or args.hash or args.disassemble or args.graph or args.fire_lasers
+    if not (args.search or args.hash or args.disassemble or args.graph or args.fire_lasers or args.annotations
             or args.storage or args.truffle or args.statespace_json):
         parser.print_help()
         sys.exit()
@@ -156,6 +160,11 @@ def main():
             #if args.graph and len(args.solidity_file) > 1:
             #    exit_with_error(args.outform,
             #                    "Cannot generate call graphs from multiple input files. Please do it one at a time.")
+            print(args.solidity_file)
+            if args.annotations:
+                # create new subdirectory
+                # change working direktory or append path to current source files
+                # do necessary conversions of filenames
             address, _ = mythril.load_from_solidity(args.solidity_file)  # list of files
         else:
             exit_with_error(args.outform,
@@ -202,6 +211,11 @@ def main():
                     'markdown': report.as_markdown()
                 }
                 print(outputs[args.outform])
+
+        if args.annotations:
+            if not mythril.contracts:
+                exit_with_error(args.outform, "input files do not contain any valid contracts")
+            check_annotations(mythril.contracts, address, mythril.eth, mythril.dynld, args.max_depth)
 
         elif args.statespace_json:
 

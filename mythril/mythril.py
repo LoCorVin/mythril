@@ -343,12 +343,6 @@ class Mythril(object):
                                  dynloader=DynLoader(self.eth) if self.dynld else None,
                                  max_depth=max_depth)
 
-
-            contr_to_const = deepcopy(contract)
-            contr_to_const.disassembly = Disassembly(contr_to_const.creation_code)
-            contr_to_const.code = contr_to_const.creation_code
-            sym.sym_constr = (contr_to_const, address, DynLoader(self.eth) if self.dynld else None, max_depth)
-
             issues = fire_lasers(sym, modules)
 
             if type(contract) == SolidityContract:
