@@ -10,6 +10,7 @@ import json
 import sys
 import argparse
 from mythril.solidnotary.annotation_runner import check_annotations
+from mythril.solidnotary.solidnotary import SolidNotary
 
 # logging.basicConfig(level=logging.DEBUG)
 
@@ -162,6 +163,10 @@ def main():
             #                    "Cannot generate call graphs from multiple input files. Please do it one at a time.")
             print(args.solidity_file)
             if args.annotations:
+                solidnotary = SolidNotary()
+                solidnotary.create_tmp_dir()
+                solidnotary.copy_files_to_tmp(args.solidity_file)
+
                 # create new subdirectory
                 # change working direktory or append path to current source files
                 # do necessary conversions of filenames
@@ -215,7 +220,10 @@ def main():
         if args.annotations:
             if not mythril.contracts:
                 exit_with_error(args.outform, "input files do not contain any valid contracts")
-            check_annotations(mythril.contracts, address, mythril.eth, mythril.dynld, args.max_depth)
+            solidnotary.enter_tmp_dir()
+            solidnotary.provide_resources(mythril.contracts, address, mythril.eth, mythril.dynld, args.max_depth)
+            solidnotary.check_annotations()
+            solidnotary.delete_tmp_dir()
 
         elif args.statespace_json:
 

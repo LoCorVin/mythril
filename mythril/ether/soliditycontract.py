@@ -26,6 +26,25 @@ class SourceCodeInfo:
         self.lineno = lineno
         self.code = code
 
+def build_src_mappings(srcmapping, solidity_files):
+    mappings = []
+    for item in srcmapping:
+        mapping = item.split(":")
+
+        if len(mapping) > 0 and len(mapping[0]) > 0:
+            offset = int(mapping[0])
+
+        if len(mapping) > 1 and len(mapping[1]) > 0:
+            length = int(mapping[1])
+
+        if len(mapping) > 2 and len(mapping[2]) > 0:
+            idx = int(mapping[2])
+
+        lineno = solidity_files[idx].data[0:offset].count('\n') + 1
+
+        mappings.append(SourceMapping(idx, offset, length, lineno))
+    return mappings
+
 
 class SolidityContract(ETHContract):
 
@@ -54,6 +73,7 @@ class SolidityContract(ETHContract):
                     abi = contract['abi']
                     creation_code = contract['bin']
                     srcmap = contract['srcmap-runtime'].split(";")
+                    creation_srcmap = contract['srcmap'].split(";")
                     has_contract = True
                     break
 
@@ -69,29 +89,19 @@ class SolidityContract(ETHContract):
                     abi = contract['abi']
                     creation_code = contract['bin']
                     srcmap = contract['srcmap-runtime'].split(";")
+                    creation_srcmap = contract['srcmap'].split(";")
                     has_contract = True
 
         if not has_contract:
             raise NoContractFoundError
 
         self.mappings = []
+        self.mappings.extend(build_src_mappings(srcmap, self.solidity_files))
 
-        for item in srcmap:
-            mapping = item.split(":")
+        self.creation_mappings = []
+        self.creation_mappings.extend(build_src_mappings(creation_srcmap, self.solidity_files))
 
-            if len(mapping) > 0 and len(mapping[0]) > 0:
-                offset = int(mapping[0])
-
-            if len(mapping) > 1 and len(mapping[1]) > 0:
-                length = int(mapping[1])
-
-            if len(mapping) > 2 and len(mapping[2]) > 0:
-                idx = int(mapping[2])
-
-            lineno = self.solidity_files[idx].data[0:offset].count('\n') + 1
-
-            self.mappings.append(SourceMapping(idx, offset, length, lineno))
-            self.abi = abi
+        self.abi = abi
 
         super().__init__(code, creation_code, name=name)
 
