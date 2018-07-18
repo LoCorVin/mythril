@@ -9,7 +9,6 @@ import logging
 import json
 import sys
 import argparse
-from mythril.solidnotary.annotation_runner import check_annotations
 from mythril.solidnotary.solidnotary import SolidNotary
 
 # logging.basicConfig(level=logging.DEBUG)
@@ -166,6 +165,7 @@ def main():
                 solidnotary = SolidNotary()
                 solidnotary.create_tmp_dir()
                 solidnotary.copy_files_to_tmp(args.solidity_file)
+                solidnotary.enter_tmp_dir()
 
                 # create new subdirectory
                 # change working direktory or append path to current source files
@@ -220,8 +220,8 @@ def main():
         if args.annotations:
             if not mythril.contracts:
                 exit_with_error(args.outform, "input files do not contain any valid contracts")
-            solidnotary.enter_tmp_dir()
             solidnotary.provide_resources(mythril.contracts, address, mythril.eth, mythril.dynld, args.max_depth)
+            solidnotary.parse_annotations()
             solidnotary.check_annotations()
             solidnotary.delete_tmp_dir()
 

@@ -5,27 +5,22 @@ from mythril.analysis.symbolic import SymExecWrapper
 from mythril.support.loader import DynLoader
 from mythril.disassembler.disassembly import Disassembly
 from mythril.solidnotary.calldata import get_minimal_constructor_param_encoding_len, abi_json_to_abi
+from mythril.solidnotary.coderewriter import newlines, write_code, get_code, \
+    replace_comments_with_whitespace, comment_out_annotations
+from .codeparser import find_matching_closed_bracket
+from mythril.solidnotary.annotation import annotation_kw, init_annotation
 from z3 import BitVec,eq
 from os.path import exists, isdir, dirname, isfile, join
 from os import makedirs, chdir, listdir, getcwd
 from re import finditer, escape
-from re import finditer, escape
 from laser.ethereum.svm import GlobalState, Account, Environment, MachineState, CalldataType
 from shutil import rmtree, copy
-from re import findall
+from re import findall, sub
 from copy import deepcopy
 
-tmp_dir_name = "solidnotary_tmp"
+project_name = "solidnotary"
 
-ANNOTATION_START = "@"
-ANNOTATION_START_REPLACEMENT = "//@"
-
-newlines = ["\r\n", "\r", "\n"]
-
-opening_brackets = ["(", "{", "[", "<"]
-closing_brackets = [")", "}", "]", ">"]
-
-annotation_kw = ["check", "invariant", "construction", "ethersink", "ethersource"]
+tmp_dir_name = project_name + "_tmp"
 
 def find_all(a_str, sub):
     start = 0
@@ -45,29 +40,6 @@ def count_elements(source, elements):
 def replace_index(text, toReplace, replacement, index):
     return text[:index] + replacement + text[(index + len(toReplace)):]
 
-def find_matching_closed_bracket(filedata, bracket_idx):
-    bracket = filedata[bracket_idx]
-    opening_bracket = filedata[bracket_idx] in opening_brackets
-
-    if opening_bracket:
-        to_search = filedata[bracket_idx:]
-    else:
-        to_search = filedata[:(bracket_idx + 1)][::-1]
-    matching_bracket = closing_brackets[opening_brackets.index(bracket)] if opening_bracket \
-        else closing_brackets[opening_brackets.index(bracket)]
-    idx = 0
-    counter = 0
-    while True:
-        if to_search[idx] == bracket:
-            counter += 1
-        elif to_search[idx] == matching_bracket:
-            counter -= 1
-        if counter <= 0:
-            break
-        idx += 1
-
-    return bracket_idx + (idx if opening_bracket else -idx)
-
 def find_contract_idx_range(contract):
     containing_file = get_containing_file(contract)
     contract_idx = next(finditer(r'contract\s*' + escape(contract.name) + r'\s*{', containing_file.data), None)
@@ -77,25 +49,8 @@ def find_contract_idx_range(contract):
     end_contract = find_matching_closed_bracket(containing_file.data, end_head)
     return start_head, end_head, end_contract
 
-def substr_first(string, subs1, subs2):
-    if subs1 in string and subs2 in string:
-        return subs1 if string.index(subs1) < string.index(subs2) else subs2
-    elif subs1 in string:
-        return subs1
-    elif subs2 in string:
-        return subs2
-    return None
 
-def current_line_contains(string, sub):
-    if sub not in string:
-        return False
-    newline_idx = len(string)
-    for newline in newlines:
-        if newline in string:
-            newline_idx = min(newline_idx, string.index(newline))
-    if newline_idx == len(string):
-        return True
-    return string.index(sub) <= newline_idx
+
 
 # Todo search for next ; or ...) in the inverse string, exclude content of multiline- and line of linecomments
 
@@ -106,16 +61,10 @@ def get_containing_file(contract):
     containing_file = None
     for sol_file in contract.solidity_files:
         contract_idx = next(finditer(r'contract\s*' + escape(contract_name) + r'\s*{', sol_file.data), None)
-        if not contract_idx:
+        if contract_idx:
             containing_file = sol_file
             break
     return containing_file
-
-def after_implicit_block(contract, idx):
-    # Todo I should be more careful. Instead of just building my strings and writing them to files I maybe should take
-    # care of the contract building process. Maybe the best way is to overwrite solidity_file.data and write that to the
-    # file
-    code = get_containing_file(contract).data[::-1]
 
 
 """
@@ -133,33 +82,16 @@ def parse_annotation_info(filedata):
             annotations.append((pos, line, col, '//invariant(', inv[0], ")", inv[1]))
     return set(annotations)
 
-def comment_out_annotations(filename):
-    with open(filename, 'r') as file:
-        filedata = file.read()
+def parse_annotation_info(code):
+    annotations = []
     for kw in annotation_kw:
-        filedata = filedata.replace(ANNOTATION_START + kw, ANNOTATION_START_REPLACEMENT + kw)
+        annot_iterator = finditer(r'//@' + escape(kw), code)
+        annot_iter = next(annot_iterator, None)
+        while annot_iter:
+            annotation = init_annotation(code, annot_iter.group(), kw, annot_iter.start(), annot_iter.end())
+            annotations.append(annotation)
+            annot_iter = next(annot_iterator, None)
 
-    with open(filename, 'w') as file:
-        file.write(filedata)
-
-def recomment_annotations(filename):
-    with open(filename, 'r') as file:
-        filedata = file.read()
-
-    for kw in annotation_kw:
-        filedata = filedata.replace(ANNOTATION_START_REPLACEMENT + kw, ANNOTATION_START + kw)
-
-    with open(filename, 'w') as file:
-        file.write(filedata)
-
-def get_lines(filename):
-    lines = []
-    with open(filename) as file:
-        lines= file.readlines()
-    return lines
-
-def write_filedata_to_file(filename, filedata):
-    pass
 
 def read_write_file(filename):
     with open(filename, 'r') as file:
@@ -186,6 +118,7 @@ class SolidNotary:
         # Todo receive a list of files or a file, these are modified for the analysis
         self.wd = getcwd()
         self.tmp_dir = None
+        self.annotation_map = {}
 
     def create_tmp_dir(self):
         self.tmp_dir = self.wd + "/" + tmp_dir_name
@@ -200,6 +133,11 @@ class SolidNotary:
             if dirna and not exists(dirna):
                 makedirs(dirna)
             copy(file, self.tmp_dir + "/" + file)
+            if file.endswith(".sol"):
+                code = get_code(self.tmp_dir + "/" + file)
+                code = replace_comments_with_whitespace(code)
+                write_code(self.tmp_dir + "/" + file, code)
+                comment_out_annotations(self.tmp_dir + "/" + file)
 
 
     def copy_dir_content_to_tmp(self, dirpath):
@@ -222,32 +160,73 @@ class SolidNotary:
 
 
     def parse_annotations(self):
-        pass
+        # Todo from which contract to parse?
+        for contract in self.contracts:
+
+            code = get_containing_file(contract).data
+            contract_range = find_contract_idx_range(contract)
+            code = code[contract_range[0]:contract_range[2]]
+
+            for kw in annotation_kw:
+                annot_iterator = finditer(r'//@' + escape(kw), code)
+                annot_iter = next(annot_iterator, None)
+                if annot_iter and contract.name not in self.annotation_map:
+                    self.annotation_map[contract.name] = []
+                while annot_iter:
+                    annotation = init_annotation(code, annot_iter.group(), kw, annot_iter.start(), annot_iter.end())
+
+                    self.annotation_map[contract.name].append(annotation)
+                    annot_iter = next(annot_iterator, None)
+        print("I need code to place my breakpoints")
+
+    def get_regular_traces(self, contract):
+        contr_to_const = deepcopy(contract)
+        contr_to_const.disassembly = Disassembly(contr_to_const.creation_code)
+        contr_to_const.code = contr_to_const.creation_code
+        dynloader = DynLoader(self.eth) if self.dynld else None
+        glbstate = get_constr_glbstate(contr_to_const, self.address)
+
+        sym_constructor = SymExecWrapper(contr_to_const, self.address, dynloader, self.max_depth, glbstate)
+        sym_contract = SymExecWrapper(contract, self.address, dynloader, max_depth=self.max_depth)
+
+        constructor_traces = get_construction_traces(sym_constructor)
+
+        traces = get_transaction_traces(sym_contract)
+        return constructor_traces, traces
+
+    def get_annotation_traces(self, contract):
+        annotations = self.annotation_map[contract.name]
+        sol_file = get_containing_file(contract)
+        origin_file_code = sol_file.data
+        contract_range = find_contract_idx_range(contract)
+        rew_file_code = origin_file_code
+        for annotation in annotations:
+            rew_file_code = annotation.rewrite_code(rew_file_code, contract_range) # Todo only reqrite the code, and remember line where the associated symbolic execution things lie
+        # Todo Properly call and integrate the rewriting, annotations are ordered by position, so updating their location
+        # in line should be done for every annotation later
+
+        write_code(sol_file.filename, rew_file_code)
+
+        # build a new contract object by the constructor
+        # Use that object to build sym_...
+        # Call annotation methods with check_functions
+        # Todo The analysis in here
+
+
+        write_code(sol_file.filename, origin_file_code)
+
+        # Todo give all annotations the symb exec result to detect single transaction violations
+
+
 
     def check_annotations(self):
         logging.debug("Executing annotations check")
 
         for contract in self.contracts:
+            constr_traces, trans_traces = self.get_regular_traces(contract)
 
-            find_contract_idx_range(contract)
-
-            contr_to_const = deepcopy(contract)
-            contr_to_const.disassembly = Disassembly(contr_to_const.creation_code)
-            contr_to_const.code = contr_to_const.creation_code
-            dynloader = DynLoader(self.eth) if self.dynld else None
-            glbstate = get_constr_glbstate(contr_to_const, self.address)
-
-            sym_constructor = SymExecWrapper(contr_to_const, self.address, dynloader, self.max_depth, glbstate)
-            sym_contract = SymExecWrapper(contract, self.address, dynloader, max_depth=self.max_depth)
-            for k in sym_contract.nodes:
-                node = sym_contract.nodes[k]
-                for state in node.states:
-                    instruction = state.get_current_instruction()
-                    if instruction['opcode'] == "STOP":
-                        storage = state.environment.active_account.storage
-                        constraints = state.mstate.constraints
-                        line_no = contract.get_source_info(instruction["address"])
-                        print()
+            self.get_annotation_traces(contract)
+            print()
 
 
     def enter_tmp_dir(self):

@@ -302,6 +302,7 @@ class LaserEVM:
                 logging.debug("Invalid PC")
                 return node
 
+
             # Save state before modifying anything
 
             node.states.append(gblState)
