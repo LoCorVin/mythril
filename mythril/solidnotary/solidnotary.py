@@ -13,7 +13,7 @@ from z3 import BitVec,eq
 from os.path import exists, isdir, dirname, isfile, join
 from os import makedirs, chdir, listdir, getcwd
 from re import finditer, escape
-from laser.ethereum.svm import GlobalState, Account, Environment, MachineState, CalldataType
+from mythril.laser.ethereum.svm import GlobalState, Account, Environment, MachineState, CalldataType
 from shutil import rmtree, copy
 from re import findall, sub
 from copy import deepcopy
