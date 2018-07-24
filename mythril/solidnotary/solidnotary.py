@@ -7,7 +7,7 @@ from mythril.ether.soliditycontract import SolidityContract
 from mythril.disassembler.disassembly import Disassembly
 from mythril.solidnotary.calldata import get_minimal_constructor_param_encoding_len, abi_json_to_abi
 from mythril.solidnotary.coderewriter import write_code, get_code, \
-    replace_comments_with_whitespace, apply_rewriting, get_editor_indexed_rewriting
+    replace_comments_with_whitespace, apply_rewriting
 from .codeparser import find_matching_closed_bracket, newlines, get_newlinetype
 from mythril.solidnotary.annotation import annotation_kw, init_annotation, increase_rewritten_pos, comment_out_annotations, expand_rew
 from z3 import BitVec,eq
@@ -232,7 +232,13 @@ class SolidNotary:
             # Use that object to build sym_...
             # Call annotation methods with check_functions
             # Todo Build this contracts annotation modified version
-            self.annotated_contracts.append(SolidityContract(sol_file.filename, contract.name, solc_args=self.solc_args))
+
+            anotation_contract = SolidityContract(sol_file.filename, contract.name, solc_args=self.solc_args)
+            anotation_contract.const_disassembly = Disassembly(anotation_contract.creation_code)
+            self.annotated_contracts.append(anotation_contract)
+
+            for annotation in self.annotation_map[contract.name]:
+                annotation.set_anotation_contract(anotation_contract)
 
             write_code(sol_file.filename, origin_file_code)
 
@@ -267,19 +273,9 @@ class SolidNotary:
 
     def get_annotation_traces(self):
         for contract in self.annotated_contracts:
-            for annotation in self.annotation_map[contract.name]:
-                for c_v_rewriting in annotation.violation_rew:
-                    v_rewriting = get_editor_indexed_rewriting(c_v_rewriting)
-                    rew_asm = []
-                    for m_idx in range(len(contract.mappings)):
-                        mapping = contract.mappings[m_idx]
-                        if mapping.lineno == v_rewriting.line:
-                            if mapping.offset >= v_rewriting.pos:
-                                if mapping.length <= len(v_rewriting.text):
-                                    print(str(mapping.lineno) + " " + str(mapping.offset) + " " + str(mapping.length) + " " + contract.disassembly.instruction_list[m_idx]['opcode'])
-                    for c_mapping in contract.creation_mappings:
-                        if c_mapping.lineno == v_rewriting.line and c_mapping.offset >= v_rewriting.pos and c_mapping.length <= len(v_rewriting.text):
-                            print(str(c_mapping.lineno) + " " + str(c_mapping.offset) + " " + str(c_mapping.length))
+            pass
+
+
 
 
 

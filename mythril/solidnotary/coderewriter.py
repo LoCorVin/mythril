@@ -43,7 +43,7 @@ def expand_rew(code, rew_tuple):
     return Rewriting(rew_tuple[0], pos, nr_nwls, col)
 
 def get_editor_indexed_rewriting(rewriting):
-    return Rewriting(rewriting.text, rewriting.pos, rewriting.line + 1, rewriting.col + 1)
+    return Rewriting(rewriting.text, rewriting.pos, rewriting.line + 1, rewriting.col)
 
 def get_code(filename):
     with open(filename, 'r', encoding="utf-8") as file:

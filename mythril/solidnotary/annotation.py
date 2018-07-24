@@ -2,7 +2,7 @@ from re import search
 from enum import Enum
 from re import match
 from .codeparser import find_matching_closed_bracket, get_pos_line_col
-from .coderewriter import expand_rew, after_implicit_block, get_exp_block_brack_pos
+from .coderewriter import expand_rew, after_implicit_block, get_exp_block_brack_pos, get_editor_indexed_rewriting
 
 
 
@@ -85,8 +85,54 @@ class Annotation:
         self.annotation_str = annotation_str
         self.violations = [] # Filled when executing scheck_single_transactions
 
+        self.viol_rews = [] # List of rewritings that contain code to be traceless in the symbolic execution
+        self.viol_rew_instrs = [] # list of instructions lists that are associated to the rewriting in the same position
+        self.viol_inst = [] # Single instruction that triggers the violation through 'ASSERT_FAIL'
+        self.exit_inst = [] # Single instruction that marks end of the violation rewriting, currently a 'JUMPDEST'
+
+        self.anotation_contract = None
+
     def rewrite_code(self, code): # In the default case it returns '' empty string, to delete it before handing it over to the compiler
         raise NotImplementedError("Abstract function of Annotation abstraction")
+
+    def set_anotation_contract(self, anotation_contract):
+        self.anotation_contract = anotation_contract
+        self.build_instruction_lists()
+
+    def build_instruction_lists(self):
+
+        for v_rewriting in self.viol_rews:
+            rewriting = get_editor_indexed_rewriting(v_rewriting)
+            rew_asm = []
+            viol_instr, exit_instr = None, None
+            for m_idx in range(len(self.anotation_contract.mappings)):
+                mapping = self.anotation_contract.mappings[m_idx]
+                if mapping.lineno == rewriting.line and mapping.offset >= rewriting.pos and mapping.length <= len(rewriting.text):
+                    instr = self.anotation_contract.disassembly.instruction_list[m_idx]
+                    rew_asm.append(instr)
+                    print(instr['opcode'])
+                    if instr['opcode'] == 'JUMPDEST':
+                        exit_instr = instr
+                    elif instr['opcode'] == 'ASSERT_FAIL':
+                        viol_instr = instr
+
+            for m_idx in range(len(self.anotation_contract.creation_mappings)):
+                mapping = self.anotation_contract.creation_mappings[m_idx]
+                if mapping.lineno == rewriting.line and mapping.offset >= rewriting.pos and mapping.length <= len(rewriting.text):
+                    instr = self.anotation_contract.disassembly.instruction_list[m_idx]
+                    rew_asm.append(instr)
+                    print(instr['opcode'])
+                    if instr['opcode'] == 'JUMPDEST':
+                        exit_instr = instr
+                    elif instr['opcode'] == 'ASSERT_FAIL':
+                        viol_instr = instr
+
+            self.viol_rew_instrs.append(rew_asm)
+
+            self.viol_inst.append(viol_instr)
+            self.exit_inst.append(exit_instr)
+
+
 
     def get_rewritten_loc(self):
         if hasattr(self, "rewritten_loc"):
@@ -123,8 +169,6 @@ class CheckAnnotation(Annotation):
         self.origin = origin_loc # Has to be calculated before
         self.rewritings = []
 
-        self.violation_rew = []
-
         self.content = annotation_str[(annotation_str.index("(") + 1):][::-1]
         self.content = self.content[(self.content.index(")") + 1):][::-1]
 
@@ -140,7 +184,7 @@ class CheckAnnotation(Annotation):
         else:
             self.rewritings.append(assert_rew)
 
-        self.violation_rew.append(assert_rew)
+        self.viol_rews.append(assert_rew)
         return self.rewritings
 
     def build_violations(self, sym_myth):
