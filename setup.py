@@ -6,7 +6,7 @@ import os
 # Package version (vX.Y.Z). It must match git tag being used for CircleCI
 # deployment; otherwise the build will failed.
 
-VERSION = "v0.18.7"
+VERSION = "v0.18.9"
 
 
 class VerifyVersionCommand(install):
@@ -166,9 +166,6 @@ in the `legendary "Mitch Brenner" blog post
 <https://medium.com/@rtaylor30/how-i-snatched-your-153-037-eth-after-a-bad-tinder-date-d1d84422a50b>`__
 in [STRIKEOUT:seconds] minutes instead of days.
 
-The default behavior is to search contracts with a non-zero balance.
-You can disable this behavior with the ``--search-all`` flag.
-
 You may also use geth database directly for fetching contracts instead of
 using IPC/RPC APIs by specifying ``--leveldb`` flag. This is useful
 because search will return hashed addresses which will not be accepted by
@@ -305,7 +302,7 @@ setup(
     packages=find_packages(exclude=['contrib', 'docs', 'tests']),
 
     install_requires=[
-        'ethereum>=2.3.0',
+        'ethereum>=2.3.2',
         'z3-solver>=4.5',
         'requests',
         'py-solc',
@@ -320,7 +317,7 @@ setup(
         'eth-tester>=0.1.0b21',
         'coverage',
         'jinja2>=2.9',
-        'rlp<1.0.0',
+        'rlp>=1.0.1',
         'py-flags',
         'mock',
         'configparser>=3.5.0',

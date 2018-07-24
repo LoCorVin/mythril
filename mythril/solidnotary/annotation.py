@@ -2,6 +2,7 @@ from re import search
 from enum import Enum
 from re import match
 from .codeparser import find_matching_closed_bracket, get_pos_line_col
+from .coderewriter import expand_rew, after_implicit_block, get_exp_block_brack_pos
 
 
 
@@ -10,7 +11,26 @@ ANNOTATION_START_REPLACEMENT = "//@"
 annotation_kw = ["check", "invariant", "construction", "ethersink", "ethersource"]
 
 
-def get_origin__pos_line_col(text):
+def comment_out_annotations(filename):
+    with open(filename, 'r') as file:
+        filedata = file.read()
+    for kw in annotation_kw:
+        filedata = filedata.replace(ANNOTATION_START + kw, ANNOTATION_START_REPLACEMENT + kw)
+
+    with open(filename, 'w') as file:
+        file.write(filedata)
+
+def recomment_annotations(filename):
+    with open(filename, 'r') as file:
+        filedata = file.read()
+
+    for kw in annotation_kw:
+        filedata = filedata.replace(ANNOTATION_START_REPLACEMENT + kw, ANNOTATION_START + kw)
+
+    with open(filename, 'w') as file:
+        file.write(filedata)
+
+def get_origin_pos_line_col(text):
     return get_pos_line_col(text.replace(ANNOTATION_START_REPLACEMENT, ANNOTATION_START))
 
 def get_annotation_content(code, content_start):
@@ -25,10 +45,10 @@ def get_annotation_content(code, content_start):
 def init_annotation(code, head, kw, start, end):
     if kw == "check":
         content, content_prefix = get_annotation_content(code, start + len(head))
-        return CheckAnnotation(code[start:(end + content_prefix)] + content + ")", get_pos_line_col(code[:start]), get_origin__pos_line_col(code[:start]))
+        return CheckAnnotation(code[start:(end + content_prefix)] + content + ")", get_pos_line_col(code[:start]), get_origin_pos_line_col(code[:start]))
     elif kw == "invariant":
         content, content_prefix = get_annotation_content(code, start + len(head))
-        return InvariantAnnotation(code[start:(end + content_prefix)] + content + ")", get_pos_line_col(code[:start]), get_origin__pos_line_col(code[:start]))
+        return InvariantAnnotation(code[start:(end + content_prefix)] + content + ")", get_pos_line_col(code[:start]), get_origin_pos_line_col(code[:start]))
     elif kw == "construction":
         pass
 
@@ -37,6 +57,18 @@ def init_annotation(code, head, kw, start, end):
 
     elif kw == "ethersource":
         pass
+
+def increase_rewritten_pos(ano_rewritings, rewriting, nwl_type="\n"):
+    for ano_rewriting in ano_rewritings:
+        nr_nwl = rewriting.text.count(nwl_type)
+        if ano_rewriting != rewriting and ano_rewriting.pos >= rewriting.pos:
+            ano_rewriting.line += nr_nwl
+            ano_rewriting.pos += len( rewriting.text)
+            if not ano_rewriting.text.endswith(nwl_type) and ano_rewriting.line == rewriting.line:
+                if nwl_type in ano_rewriting.text:
+                    ano_rewriting.pos += ano_rewriting.text[::-1].index(nwl_type[::-1])
+                else:
+                    ano_rewriting.pos += len(ano_rewriting.text)
 
 
 class Status(Enum):
@@ -55,6 +87,11 @@ class Annotation:
 
     def rewrite_code(self, code): # In the default case it returns '' empty string, to delete it before handing it over to the compiler
         raise NotImplementedError("Abstract function of Annotation abstraction")
+
+    def get_rewritten_loc(self):
+        if hasattr(self, "rewritten_loc"):
+            return self.rewritten_loc
+        return []
 
     def build_violations(self, sym_myth):
         raise NotImplementedError("Abstract function of Annotation abstraction")
@@ -80,12 +117,13 @@ class Annotation:
 
 class CheckAnnotation(Annotation):
 
-    code_const_pair = ("block.")
-
     def __init__(self, annotation_str, loc, origin_loc):
         self.annotation_str = annotation_str
         self.loc = loc
-        self.origin = origin_loc
+        self.origin = origin_loc # Has to be calculated before
+        self.rewritings = []
+
+        self.violation_rew = []
 
         self.content = annotation_str[(annotation_str.index("(") + 1):][::-1]
         self.content = self.content[(self.content.index(")") + 1):][::-1]
@@ -93,7 +131,17 @@ class CheckAnnotation(Annotation):
         Annotation.__init__(self, annotation_str)
 
     def rewrite_code(self, code, contract_range): # In the default case it returns '' empty string, to delete it before handing it over to the compiler
-        return code
+        assert_rew = expand_rew(code, ("assert(" + self.content + ");", self.loc[0]))
+        if after_implicit_block(code, self.loc[0]):
+            start, end = get_exp_block_brack_pos(code, self.loc[0])
+            self.rewritings.append(expand_rew(code, ("{", start)))
+            self.rewritings.append(assert_rew)
+            self.rewritings.append(expand_rew(code, ("}", end)))
+        else:
+            self.rewritings.append(assert_rew)
+
+        self.violation_rew.append(assert_rew)
+        return self.rewritings
 
     def build_violations(self, sym_myth):
         raise NotImplementedError("Abstract function of Annotation abstraction")
@@ -110,13 +158,17 @@ class InvariantAnnotation(Annotation):
         self.loc = loc
         self.origin = origin_loc
 
+        self.rewritings = []
+
+        self.violation_rew = []
+
         self.content = annotation_str[(annotation_str.index("(") + 1):][::-1]
         self.content = self.content[(self.content.index(")") + 1):][::-1]
 
         Annotation.__init__(self, annotation_str)
 
     def rewrite_code(self, code, contract_range): # In the default case it returns '' empty string, to delete it before handing it over to the compiler
-        return code
+        return []
 
     def build_violations(self, sym_myth):
         raise NotImplementedError("Abstract function of Annotation abstraction")

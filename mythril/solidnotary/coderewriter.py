@@ -1,47 +1,63 @@
-from .annotation import annotation_kw, ANNOTATION_START, ANNOTATION_START_REPLACEMENT
 from re import finditer, escape, DOTALL
 from re import findall, sub
+from .codeparser import find_matching_closed_bracket, get_newlinetype, is_commented_out
 
 
-newlines = ["\r\n", "\r", "\n"]
+
+class Rewriting:
+
+    def __init__(self, text, pos, line, col):
+        self.text = text
+        self.pos = pos
+        self.line = line
+        self.col = col
+
+    def __eq__(self, other):
+        if isinstance(other, Rewriting):
+            return self.text == other.text and self.pos == other.pos and self.line == other.line and self.col == other.col
+        return NotImplemented
 
 
+def apply_rewriting(code, rewriting):
+    pre = code[:rewriting.pos]
+
+    post = code[rewriting.pos:]
+
+    rew = rewriting.text
+
+
+    return code[:rewriting.pos] + rewriting.text + code[rewriting.pos:]
+
+
+
+def get_line_count(text):
+    return text.count(get_newlinetype(text))
+
+def expand_rew(code, rew_tuple):
+    pos = rew_tuple[1]
+    nr_nwls = code[:pos].count(get_newlinetype(code))
+    if get_newlinetype(code) in code[:pos]:
+        col = code[:pos][::-1].index(get_newlinetype(code)[::1])
+    else:
+        col = pos
+    return Rewriting(rew_tuple[0], pos, nr_nwls, col)
+
+def get_editor_indexed_rewriting(rewriting):
+    return Rewriting(rewriting.text, rewriting.pos, rewriting.line + 1, rewriting.col + 1)
 
 def get_code(filename):
-    with open(filename, 'r') as file:
+    with open(filename, 'r', encoding="utf-8") as file:
         return file.read()
 
 def write_code(filename, code):
-    with open(filename, 'w') as file:
+    with open(filename, 'w', encoding="utf-8") as file:
         file.write(code)
 
 def get_lines(filename):
     lines = []
-    with open(filename) as file:
+    with open(filename, encoding="utf-8") as file:
         lines= file.readlines()
     return lines
-
-
-def comment_out_annotations(filename):
-    with open(filename, 'r') as file:
-        filedata = file.read()
-    for kw in annotation_kw:
-        filedata = filedata.replace(ANNOTATION_START + kw, ANNOTATION_START_REPLACEMENT + kw)
-
-    with open(filename, 'w') as file:
-        file.write(filedata)
-
-def recomment_annotations(filename):
-    with open(filename, 'r') as file:
-        filedata = file.read()
-
-    for kw in annotation_kw:
-        filedata = filedata.replace(ANNOTATION_START_REPLACEMENT + kw, ANNOTATION_START + kw)
-
-    with open(filename, 'w') as file:
-        file.write(filedata)
-
-
 
 def substr_first(string, subs1, subs2):
     if subs1 in string and subs2 in string:
@@ -52,16 +68,18 @@ def substr_first(string, subs1, subs2):
         return subs2
     return None
 
-def current_line_contains(string, sub):
-    if sub not in string:
-        return False
-    newline_idx = len(string)
-    for newline in newlines:
-        if newline in string:
-            newline_idx = min(newline_idx, string.index(newline))
-    if newline_idx == len(string):
-        return True
-    return string.index(sub) <= newline_idx
+#def current_line_contains(string, sub):
+#    if sub not in string:
+#        return False
+#    newline_idx = len(string)
+#    for newline in newlines:
+#        if newline in string:
+#            newline_idx = min(newline_idx, string.index(newline))
+#    if newline_idx == len(string):
+#        return True
+#    return string.index(sub) <= newline_idx
+
+
 
 def remove_solidity_comments(code):
     code = sub(escape('/*') + r'(.*?)\*/', r"", code, flags=DOTALL)
@@ -93,19 +111,61 @@ def replace_comments_with_whitespace(code):
 
 
 
-def after_implicit_block(code, idx):
-    code = code[:idx][::-1]
-
+def after_implicit_block(origin_code, idx):
+    code = origin_code[:idx][::-1]
+    # although this is used after eliminating the original comments, commented out annotations could in theory hold this kws
     impb_idx = next(finditer(r'(esle|fi|elihw)', code), None)
     no_impb_idx = next(finditer(r';|}|{', code), None)
 
     if not impb_idx:
         return False
 
-    if no_impb_idx and no_impb_idx.start() < no_impb_idx.start():
+    impb_idx_pos = impb_idx.start()
+    if no_impb_idx and no_impb_idx.start() < impb_idx_pos:
         return False
+    if impb_idx.group() != 'esle':
+        real_pos = len(origin_code) - impb_idx_pos - (len(origin_code) - idx)
+        brack_pos = next(finditer(r'\s*\(', origin_code[real_pos:]), None)
+        tmp = origin_code[real_pos:]
+        tmp2 = origin_code[:real_pos]
+        if not brack_pos:
+            raise SyntaxError(impb_idx.group()[::-1] + " needs following (...)")
+        real_pos = real_pos + brack_pos.end() - 1
+        real_pos = find_matching_closed_bracket(origin_code, real_pos)
+        impb_idx_pos = len(origin_code) - real_pos
+
+        # if one that needs () get end of ()
+
+
     return True
 
-with open("comment_test.sol", 'r') as file:
+def get_exp_block_brack_pos(origin_code, idx):
+    origin_code = replace_comments_with_whitespace(origin_code)
+    code = origin_code[:idx][::-1]
+    start, stop = None, None
+    # although this is used after eliminating the original comments, commented out annotations could in theory hold this kws
+    impb_idx = next(finditer(r'(esle|fi|rof|elihw)', code), None)
+
+    if impb_idx.group() == 'esle':
+        start = len(code) - impb_idx.start()
+    else:
+        code = origin_code[(idx - impb_idx.start()):]
+        brack_pos = next(finditer(r'\s*\(', code), None)
+        brack_pos = find_matching_closed_bracket(origin_code, brack_pos.end() - 1 + idx - impb_idx.start())
+        start = brack_pos + 1
+
+    iter_idx = start
+    while iter_idx < len(origin_code):
+        if origin_code[iter_idx] in ["(", "[", "{"]:
+            iter_idx = find_matching_closed_bracket(origin_code, origin_code)
+        if origin_code[iter_idx] in ["}", ";"]:
+            end = iter_idx + 1
+            break
+        iter_idx += 1
+
+    return start, end
+
+
+with open("comment_test.sol", 'r', encoding="utf-8") as file:
     code = file.read()
 print(replace_comments_with_whitespace(code))

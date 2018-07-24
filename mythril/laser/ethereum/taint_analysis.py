@@ -1,5 +1,5 @@
 import logging, copy
-import mythril.laser.ethereum.helper as helper
+import mythril.laser.ethereum.util as helper
 
 
 class TaintRecord:
@@ -101,15 +101,28 @@ class TaintRunner:
 
         # List of (Node, TaintRecord, index)
         current_nodes = [(node, init_record, state_index)]
+        environment = node.states[0].environment
 
         for node, record, index in current_nodes:
             records = TaintRunner.execute_node(node, record, index)
+
             result.add_records(records)
 
-            children = [statespace.nodes[edge.node_to] for edge in statespace.edges if edge.node_from == node.uid]
+            children = TaintRunner.children(node, statespace, environment)
             for child in children:
-                current_nodes.append((child, records[-1], 0))
+                    current_nodes.append((child, records[-1], 0))
         return result
+
+    @staticmethod
+    def children(node, statespace, environment):
+        direct_children = [statespace.nodes[edge.node_to] for edge in statespace.edges if edge.node_from == node.uid]
+        children = []
+        for child in direct_children:
+            if child.states[0].environment == environment:
+                children.append(child)
+            else:
+                children += TaintRunner.children(child, statespace, environment)
+        return children
 
     @staticmethod
     def execute_node(node, last_record, state_index=0):
@@ -135,6 +148,7 @@ class TaintRunner:
 
         # Apply Change
         op = state.get_current_instruction()['opcode']
+
         if op in TaintRunner.stack_taint_table.keys():
             mutator = TaintRunner.stack_taint_table[op]
             TaintRunner.mutate_stack(new_record, mutator)

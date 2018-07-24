@@ -3,17 +3,19 @@ from mythril.solidnotary.transactiontrace import TransactionTrace
 from mythril.solidnotary.z3utility import are_z3_satisfiable
 from mythril.analysis.symbolic import SymExecWrapper
 from mythril.support.loader import DynLoader
+from mythril.ether.soliditycontract import SolidityContract
 from mythril.disassembler.disassembly import Disassembly
 from mythril.solidnotary.calldata import get_minimal_constructor_param_encoding_len, abi_json_to_abi
-from mythril.solidnotary.coderewriter import newlines, write_code, get_code, \
-    replace_comments_with_whitespace, comment_out_annotations
-from .codeparser import find_matching_closed_bracket
-from mythril.solidnotary.annotation import annotation_kw, init_annotation
+from mythril.solidnotary.coderewriter import write_code, get_code, \
+    replace_comments_with_whitespace, apply_rewriting, get_editor_indexed_rewriting
+from .codeparser import find_matching_closed_bracket, newlines, get_newlinetype
+from mythril.solidnotary.annotation import annotation_kw, init_annotation, increase_rewritten_pos, comment_out_annotations, expand_rew
 from z3 import BitVec,eq
 from os.path import exists, isdir, dirname, isfile, join
 from os import makedirs, chdir, listdir, getcwd
 from re import finditer, escape
-from mythril.laser.ethereum.svm import GlobalState, Account, Environment, MachineState, CalldataType
+from mythril.laser.ethereum.svm import GlobalState, Account, Environment, CalldataType
+from mythril.laser.ethereum.state import MachineState
 from shutil import rmtree, copy
 from re import findall, sub
 from copy import deepcopy
@@ -21,6 +23,8 @@ from copy import deepcopy
 project_name = "solidnotary"
 
 tmp_dir_name = project_name + "_tmp"
+
+laser_strategy = "dfs"
 
 def find_all(a_str, sub):
     start = 0
@@ -113,12 +117,15 @@ def read_write_file(filename):
 
 class SolidNotary:
 
-    def __init__(self):
+    def __init__(self, solc_args):
         # Todo Parse Annotations and store them in an additional structure
         # Todo receive a list of files or a file, these are modified for the analysis
+        self.solc_args = solc_args
+
         self.wd = getcwd()
         self.tmp_dir = None
         self.annotation_map = {}
+        self.annotated_contracts = []
 
     def create_tmp_dir(self):
         self.tmp_dir = self.wd + "/" + tmp_dir_name
@@ -179,6 +186,56 @@ class SolidNotary:
                     annot_iter = next(annot_iterator, None)
         print("I need code to place my breakpoints")
 
+    def get_ignore_instructions(self, code, annotations):
+        # Todo compute the instructions whos state changes should not have a influence on the other instructions
+        # instruction 'address' or 'index' and "A RESET FLAG" to allow for annotations to ignore each other.
+        return []
+
+    def build_annotated_contracts(self):
+        for contract in self.contracts:
+            annotations = self.annotation_map[contract.name]
+            sol_file = get_containing_file(contract)
+            origin_file_code = sol_file.data
+
+            contract_range = find_contract_idx_range(contract)
+            origin_contract_code = origin_file_code[contract_range[0]:(contract_range[2] + 1)]
+            contract_prefix = origin_file_code[:contract_range[0]]
+            contract_suffix = origin_file_code[(contract_range[2] + 1):]
+
+            contract_prefix_as_rew = expand_rew(origin_contract_code, (contract_prefix, 0))
+
+            rew_contract_code = origin_contract_code
+            # Todo Maybe I should first collect all rewritings and eliminate those that are the same, or just read in a file and eliminate implicit blocks
+
+            rewritings = []
+
+            for annotation in annotations:
+                rewritings.extend(annotation.rewrite_code(rew_contract_code,
+                                                          contract_range))  # Todo only reqrite the code, and remember line where the associated symbolic execution things lie
+
+            for rew_idx in range(len(rewritings)):
+                rew_contract_code = apply_rewriting(rew_contract_code, rewritings[rew_idx])
+                increase_rewritten_pos(rewritings, rewritings[rew_idx], get_newlinetype(origin_file_code))
+
+            increase_rewritten_pos(rewritings, contract_prefix_as_rew, get_newlinetype(origin_file_code))
+
+            rew_file_code = contract_prefix + rew_contract_code + contract_suffix
+
+            # Todo Properly call and integrate the rewriting, annotations are ordered by position, so updating their location
+            # in line should be done for every annotation later
+            print("----")
+            print(rew_file_code)
+            print("----")
+            write_code(sol_file.filename, rew_file_code)
+
+            # build a new contract object by the constructor
+            # Use that object to build sym_...
+            # Call annotation methods with check_functions
+            # Todo Build this contracts annotation modified version
+            self.annotated_contracts.append(SolidityContract(sol_file.filename, contract.name, solc_args=self.solc_args))
+
+            write_code(sol_file.filename, origin_file_code)
+
     def get_regular_traces(self, contract):
         contr_to_const = deepcopy(contract)
         contr_to_const.disassembly = Disassembly(contr_to_const.creation_code)
@@ -186,46 +243,59 @@ class SolidNotary:
         dynloader = DynLoader(self.eth) if self.dynld else None
         glbstate = get_constr_glbstate(contr_to_const, self.address)
 
-        sym_constructor = SymExecWrapper(contr_to_const, self.address, dynloader, self.max_depth, glbstate)
-        sym_contract = SymExecWrapper(contract, self.address, dynloader, max_depth=self.max_depth)
+#        for inst_idx in range(len(contract.disassembly.instruction_list)):
+#            instruction = contract.disassembly.instruction_list[inst_idx]
+#            mapping = contract.mappings[inst_idx]
+#            sc_info = contract.get_source_info(instruction['address'])
+#            print(str(instruction['address']) + " " + instruction['opcode'] + " ( " + str(mapping.length) + ", " + str(mapping.lineno)
+#                  + ", " + str(mapping.offset) + " )")
+#            print(sc_info.code)
+#            print()
+
+        constr_annotation_ignore_instructions = self.get_ignore_instructions(contr_to_const.disassembly, self.annotation_map[contr_to_const.name])
+        runtime_annotation_ignore_instructions = self.get_ignore_instructions(contract.disassembly, self.annotation_map[contr_to_const.name])
+
+
+        sym_constructor = SymExecWrapper(contr_to_const, self.address, laser_strategy, dynloader, self.max_depth, glbstate=glbstate)
+        print()
+        sym_contract = SymExecWrapper(contract, self.address, laser_strategy, dynloader, max_depth=self.max_depth)
 
         constructor_traces = get_construction_traces(sym_constructor)
 
         traces = get_transaction_traces(sym_contract)
         return constructor_traces, traces
 
-    def get_annotation_traces(self, contract):
-        annotations = self.annotation_map[contract.name]
-        sol_file = get_containing_file(contract)
-        origin_file_code = sol_file.data
-        contract_range = find_contract_idx_range(contract)
-        rew_file_code = origin_file_code
-        for annotation in annotations:
-            rew_file_code = annotation.rewrite_code(rew_file_code, contract_range) # Todo only reqrite the code, and remember line where the associated symbolic execution things lie
-        # Todo Properly call and integrate the rewriting, annotations are ordered by position, so updating their location
-        # in line should be done for every annotation later
-
-        write_code(sol_file.filename, rew_file_code)
-
-        # build a new contract object by the constructor
-        # Use that object to build sym_...
-        # Call annotation methods with check_functions
-        # Todo The analysis in here
-
-
-        write_code(sol_file.filename, origin_file_code)
-
-        # Todo give all annotations the symb exec result to detect single transaction violations
+    def get_annotation_traces(self):
+        for contract in self.annotated_contracts:
+            for annotation in self.annotation_map[contract.name]:
+                for c_v_rewriting in annotation.violation_rew:
+                    v_rewriting = get_editor_indexed_rewriting(c_v_rewriting)
+                    rew_asm = []
+                    for m_idx in range(len(contract.mappings)):
+                        mapping = contract.mappings[m_idx]
+                        if mapping.lineno == v_rewriting.line:
+                            if mapping.offset >= v_rewriting.pos:
+                                if mapping.length <= len(v_rewriting.text):
+                                    print(str(mapping.lineno) + " " + str(mapping.offset) + " " + str(mapping.length) + " " + contract.disassembly.instruction_list[m_idx]['opcode'])
+                    for c_mapping in contract.creation_mappings:
+                        if c_mapping.lineno == v_rewriting.line and c_mapping.offset >= v_rewriting.pos and c_mapping.length <= len(v_rewriting.text):
+                            print(str(c_mapping.lineno) + " " + str(c_mapping.offset) + " " + str(c_mapping.length))
 
 
 
     def check_annotations(self):
+
+        self.build_annotated_contracts()
+        self.get_annotation_traces()
+        # Todo for both modes build ignore lists
+        # Todo for every contract build both sym-exe
+        
+
         logging.debug("Executing annotations check")
 
         for contract in self.contracts:
-            constr_traces, trans_traces = self.get_regular_traces(contract)
 
-            self.get_annotation_traces(contract)
+            # self.get_annotation_traces(contract)
             print()
 
 
@@ -267,7 +337,7 @@ def get_transaction_traces(statespace):
                     traces.append(TransactionTrace(state.environment.active_account.storage, state.mstate.constraints))
                 else:
                     num_elimi_traces += 1
-    print("Eminiated constructor traces: " + str(num_elimi_traces))
+    print("Transaction traces: " + str(len(traces)) + " eliminated: " + str(num_elimi_traces))
     return traces
 
 def get_construction_traces(statespace):
@@ -285,7 +355,7 @@ def get_construction_traces(statespace):
                     traces.append(TransactionTrace(state.environment.active_account.storage, state.mstate.constraints))
                 else:
                     num_elimi_traces += 1
-    print("Eminiated constructor traces: " + str(num_elimi_traces))
+    print("Construction traces: " + str(len(traces)) + " eliminated: " + str(num_elimi_traces))
     return traces
 
 def get_constr_glbstate(contract, address):
@@ -317,7 +387,7 @@ def get_constr_glbstate(contract, address):
 
     # Todo find source for account info, maybe the std statespace?
 
-    return GlobalState(accounts, environment, mstate)
+    return GlobalState(accounts, environment, None, mstate)
 
 def get_t_indexed_environment(active_account, index):
 
