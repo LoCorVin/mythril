@@ -19,6 +19,7 @@ from mythril.laser.ethereum.state import MachineState
 from shutil import rmtree, copy
 from re import findall, sub
 from copy import deepcopy
+from functools import reduce
 
 project_name = "solidnotary"
 
@@ -258,23 +259,28 @@ class SolidNotary:
 #            print(sc_info.code)
 #            print()
 
-        constr_annotation_ignore_instructions = self.get_ignore_instructions(contr_to_const.disassembly, self.annotation_map[contr_to_const.name])
-        runtime_annotation_ignore_instructions = self.get_ignore_instructions(contract.disassembly, self.annotation_map[contr_to_const.name])
+        const_ignore_list = []
+        trans_ignore_list = []
+
+        for annotation in self.annotation_map[contract.name]:
+            const_ignore_list.extend(annotation.get_const_ignore_list())
+            trans_ignore_list.extend(annotation.get_trans_ignore_list())
 
 
         sym_constructor = SymExecWrapper(contr_to_const, self.address, laser_strategy, dynloader, self.max_depth, glbstate=glbstate)
         print()
-        sym_contract = SymExecWrapper(contract, self.address, laser_strategy, dynloader, max_depth=self.max_depth)
+        sym_transactions = SymExecWrapper(contract, self.address, laser_strategy, dynloader, max_depth=self.max_depth)
 
-        constructor_traces = get_construction_traces(sym_constructor)
+        const_traces = get_construction_traces(sym_constructor)
 
-        traces = get_transaction_traces(sym_contract)
-        return constructor_traces, traces
+        trans_traces = get_transaction_traces(sym_transactions)
+
+        # violations = get_violations(sym_constructor, sym_transactions)
+        return const_traces, trans_traces
 
     def get_annotation_traces(self):
         for contract in self.annotated_contracts:
-            pass
-
+            const_traces, trans_traces = self.get_regular_traces(contract)
 
 
 
