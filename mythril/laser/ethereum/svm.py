@@ -27,7 +27,7 @@ class LaserEVM:
     """
 
     def __init__(self, accounts, dynamic_loader=None, max_depth=float('inf'), execution_timeout=60,
-                 strategy=DepthFirstSearchStrategy, instruction_filter=None):
+                 strategy=DepthFirstSearchStrategy, ignore_list=None):
         self.instructions_covered = []
         self.accounts = accounts
 
@@ -46,9 +46,9 @@ class LaserEVM:
         self.pre_hooks = {}
         self.post_hooks = {}
 
-        if instruction_filter:
+        if ignore_list:
             if strategy == DepthFirstSearchStrategy:
-                self.instruction_filter = instruction_filter
+                self.ignore_list = ignore_list
             else:
                 raise SVMError("Traceless instructions can be only used with DFS strategy")
 
@@ -141,7 +141,43 @@ class LaserEVM:
             self.instructions_covered[global_state.mstate.pc] = True
 
         self._execute_pre_hook(op_code, global_state)
+
+
+        instructions = global_state.environment.code.instruction_list
+        instr = instructions[global_state.mstate.pc]
+        ignore_tuples = [ign_tuple for ign_tuple in self.instructions_covered if ign_tuple[0] == instr]
+        if ignore_tuples:
+            if hasattr(global_state, 'saved_state'):
+                ign_exit_istr = ignore_tuples[0][1]
+                istr_idx = instructions.index(ign_exit_istr)
+                global_state.mstate.pc = istr_idx + 1
+            else:
+                helper_state_ref = global_state
+                global_state = deepcopy(helper_state_ref)
+                global_state.saved_state = helper_state_ref
+                # make a (deep) copy of the state and save one or the other to the saved_state
+
         new_global_states = Instruction(op_code, self.dynamic_loader).evaluate(global_state)
+
+        # After processing, is this one an end -> restor with new pc, is this on the viol inst, side save copy of globals state
+        for state_idx in range(len(new_global_states)):
+            new_state = new_global_states[state_idx]
+            instr = instructions[new_state.mstate.pc - 1]
+            ignore_tuples = [ign_tuple for ign_tuple in self.instructions_covered if ign_tuple[1] == instr]
+            if ignore_tuples:
+                if hasattr(new_state, 'saved_state'):
+                    new_global_states[state_idx] = new_state.saved_state
+                    new_global_states[state_idx].mstate.pc = new_state.mstate.pc
+                    # restore saved state with the current pc
+                else:
+                    raise RuntimeError("No saved global state at encounter of exit instruction. This should not happen")
+            ignore_tuples = [ign_tuple for ign_tuple in self.instructions_covered if ign_tuple[2] == instr]
+            if ignore_tuples:
+                # Todo safe the global state in the list of the respective instruction
+            # make a (deep) copy of the state and save one or the other to the saved_state
+
+        # Todo How do we identify same global states ? By some id statically given??
+
         self._execute_post_hook(op_code, new_global_states)
 
         return new_global_states, op_code
