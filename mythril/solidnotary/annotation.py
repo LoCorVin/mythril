@@ -11,6 +11,7 @@ ANNOTATION_START_REPLACEMENT = "//@"
 annotation_kw = ["check", "invariant", "construction", "ethersink", "ethersource"]
 
 
+
 def comment_out_annotations(filename):
     with open(filename, 'r') as file:
         filedata = file.read()
@@ -89,6 +90,9 @@ class Annotation:
         self.viol_rew_instrs = [] # list of instructions lists that are associated to the rewriting in the same position
         self.viol_inst = [] # Single instruction that triggers the violation through 'ASSERT_FAIL'
         self.exit_inst = [] # Single instruction that marks end of the violation rewriting, currently a 'JUMPDEST'
+        self.enter_inst = []
+
+        self.viol_rts = []
 
         self.anotation_contract = None
 
@@ -102,37 +106,51 @@ class Annotation:
     def build_instruction_lists(self):
 
         for v_rewriting in self.viol_rews:
+            rewriting_rt = "" # set to 'c' or 't' permanently
             rewriting = get_editor_indexed_rewriting(v_rewriting)
             rew_asm = []
-            viol_instr, exit_instr = None, None
-            for m_idx in range(len(self.anotation_contract.mappings)):
-                mapping = self.anotation_contract.mappings[m_idx]
-                if mapping.lineno == rewriting.line and mapping.offset >= rewriting.pos and mapping.length <= len(rewriting.text):
-                    instr = self.anotation_contract.disassembly.instruction_list[m_idx]
-                    rew_asm.append(instr)
-                    print(instr['opcode'])
-                    if instr['opcode'] == 'JUMPDEST':
-                        exit_instr = instr
-                    elif instr['opcode'] == 'ASSERT_FAIL':
-                        viol_instr = instr
+            viol_instr, exit_instr, enter_instr = None, None, None
+            if rewriting_rt != 'c':
+                for m_idx in range(len(self.anotation_contract.mappings)):
+                    mapping = self.anotation_contract.mappings[m_idx]
+                    if mapping.lineno == rewriting.line and mapping.offset >= rewriting.pos and mapping.length <= len(rewriting.text):
+                        instr = self.anotation_contract.disassembly.instruction_list[m_idx]
+                        rew_asm.append(instr)
+                        if not enter_instr:
+                            enter_instr = instr
+                            rewriting_rt = 't'
+                        if instr['opcode'] == 'JUMPDEST':
+                            exit_instr = instr
+                        elif instr['opcode'] == 'ASSERT_FAIL':
+                            viol_instr = instr
 
-            for m_idx in range(len(self.anotation_contract.creation_mappings)):
-                mapping = self.anotation_contract.creation_mappings[m_idx]
-                if mapping.lineno == rewriting.line and mapping.offset >= rewriting.pos and mapping.length <= len(rewriting.text):
-                    instr = self.anotation_contract.disassembly.instruction_list[m_idx]
-                    rew_asm.append(instr)
-                    print(instr['opcode'])
-                    if instr['opcode'] == 'JUMPDEST':
-                        exit_instr = instr
-                    elif instr['opcode'] == 'ASSERT_FAIL':
-                        viol_instr = instr
+            if rewriting_rt != 't':
+                for m_idx in range(len(self.anotation_contract.creation_mappings)):
+                    mapping = self.anotation_contract.creation_mappings[m_idx]
+                    if mapping.lineno == rewriting.line and mapping.offset >= rewriting.pos and mapping.length <= len(rewriting.text):
+                        instr = self.anotation_contract.disassembly.instruction_list[m_idx]
+                        rew_asm.append(instr)
+                        if not enter_instr:
+                            enter_instr = instr
+                            rewriting_rt = 'c'
+                        if instr['opcode'] == 'JUMPDEST':
+                            exit_instr = instr
+                        elif instr['opcode'] == 'ASSERT_FAIL':
+                            viol_instr = instr
 
             self.viol_rew_instrs.append(rew_asm)
 
             self.viol_inst.append(viol_instr)
             self.exit_inst.append(exit_instr)
+            self.enter_inst.append(enter_instr)
 
+            self.viol_rts.append(rewriting_rt)
 
+    def get_const_ignore_list(self):
+        return [(val0, val1, val2, val3) for val0, val1, val2, val3, val4 in list(zip(self.enter_inst, self.exit_inst, self.viol_inst, self.viol_rew_instrs, self.viol_rts)) if val4 == 'c']
+
+    def get_trans_ignore_list(self):
+        return [(val0, val1, val2, val3) for val0, val1, val2, val3, val4 in list(zip(self.enter_inst, self.exit_inst, self.viol_inst, self.viol_rew_instrs, self.viol_rts)) if val4 == 't']
 
     def get_rewritten_loc(self):
         if hasattr(self, "rewritten_loc"):
