@@ -773,7 +773,7 @@ class Instruction:
         condi = condition if type(condition) == BoolRef else condition != 0
         if instr['opcode'] == "JUMPDEST":
             if (type(condi) == bool and condi) or (type(condi) == BoolRef and not is_false(simplify(condi))):
-                new_state = copy(global_state)
+                new_state = deepcopy(global_state)
                 new_state.mstate.pc = index
                 new_state.mstate.depth += 1
                 new_state.mstate.constraints.append(condi)
