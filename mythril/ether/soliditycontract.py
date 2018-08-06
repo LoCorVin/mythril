@@ -14,9 +14,10 @@ class SourceMapping:
 
 class SolidityFile:
 
-    def __init__(self, filename, data):
+    def __init__(self, filename, data, ast=None):
         self.filename = filename
         self.data = data
+        self.ast = ast
 
 
 class SourceCodeInfo:
@@ -65,7 +66,11 @@ class SolidityContract(ETHContract):
         for filename in data['sourceList']:
             with open(filename, 'r', encoding='utf-8') as file:
                 code = file.read()
-                self.solidity_files.append(SolidityFile(filename, code))
+                try:
+                    ast = data['sources'][filename]['AST']
+                except KeyError:
+                    ast = None
+                self.solidity_files.append(SolidityFile(filename, code, ast))
 
         has_contract = False
 
@@ -80,6 +85,7 @@ class SolidityContract(ETHContract):
                     code = contract['bin-runtime']
                     abi = contract['abi']
                     creation_code = contract['bin']
+                    print(contract['srcmap-runtime'].count(';'))
                     srcmap = contract['srcmap-runtime'].split(";")
                     creation_srcmap = contract['srcmap'].split(";")
                     has_contract = True
@@ -95,6 +101,7 @@ class SolidityContract(ETHContract):
                     name = name
                     code = contract['bin-runtime']
                     abi = contract['abi']
+                    ast = contract['ast']
                     creation_code = contract['bin']
                     srcmap = contract['srcmap-runtime'].split(";")
                     creation_srcmap = contract['srcmap'].split(";")
@@ -108,7 +115,7 @@ class SolidityContract(ETHContract):
 
         self.creation_mappings = []
         self.creation_mappings.extend(build_src_mappings(creation_srcmap, self.solidity_files))
-
+        self.ast = ast
         self.abi = abi
 
         super().__init__(code, creation_code, name=name)

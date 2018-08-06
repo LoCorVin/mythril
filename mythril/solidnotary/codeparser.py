@@ -14,6 +14,9 @@ newlines = ['\r\n', '\r', '\n']
 #def in_function(code):
 #    pass
 
+
+
+
 def count_lines(text):
     if text == "":
         return 0

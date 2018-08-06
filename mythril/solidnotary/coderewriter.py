@@ -19,13 +19,6 @@ class Rewriting:
 
 
 def apply_rewriting(code, rewriting):
-    pre = code[:rewriting.pos]
-
-    post = code[rewriting.pos:]
-
-    rew = rewriting.text
-
-
     return code[:rewriting.pos] + rewriting.text + code[rewriting.pos:]
 
 
@@ -157,7 +150,7 @@ def get_exp_block_brack_pos(origin_code, idx):
     iter_idx = start
     while iter_idx < len(origin_code):
         if origin_code[iter_idx] in ["(", "[", "{"]:
-            iter_idx = find_matching_closed_bracket(origin_code, origin_code)
+            iter_idx = find_matching_closed_bracket(origin_code, iter_idx)
         if origin_code[iter_idx] in ["}", ";"]:
             end = iter_idx + 1
             break

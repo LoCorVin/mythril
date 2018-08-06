@@ -18,6 +18,7 @@ class ETHContract(persistent.Persistent):
 
         self.code = code
         self.disassembly = Disassembly(self.code)
+        self.creation_disassembly = Disassembly(self.creation_code)
 
     def as_dict(self):
 
