@@ -57,7 +57,14 @@ class AnnotationProcessor(PrePostProcessor):
 
 
     def filter(self, new_states):
-        return list(filter(lambda state: not hasattr(state, "saved_state"), new_states))
+        ret_states = []
+        for state in new_states:
+            if hasattr(state, "ignore"):
+                if state.get_current_instruction()['opcode'] == 'RETURN':
+                    print()
+            else:
+                ret_states.append(state)
+        return ret_states
 
     def is_this_or_previouse_ignore_type(self, global_state, itype=IType.ENTRY):
         instructions = global_state.environment.code.instruction_list
@@ -119,12 +126,19 @@ class AnnotationProcessor(PrePostProcessor):
 
     def postprocess(self, global_state, new_global_states):
         returnable_new_states = []
+
+        if hasattr(global_state, 'ignore'):
+            print("carry")
+            for new_state in new_global_states:
+                new_state.ignore = global_state.ignore
+
         # Had to be added, because treatment of a single instruction does not carry over added attributes
         if hasattr(global_state, 'saved_state'): # Carry
-            print("carry")
             for new_state in new_global_states:
                 new_state.saved_state = global_state.saved_state
                 new_state.id = global_state.id
+
+
 
         for new_state in new_global_states:
             if hasattr(new_state, "duplicate"):
@@ -138,22 +152,30 @@ class AnnotationProcessor(PrePostProcessor):
 
             if self.is_this_or_previouse_ignore_type(new_state, IType.ENTRY):
                 print("Duplicate new")
-                skip_state = deepcopy(new_state)
+                skip_state = new_state # Not using deepcopy here anymore, leeds to missing states in node in statespace
+                new_global_states[state_idx] = None
 
                 while self.is_this_or_previouse_ignore_type(skip_state, IType.ENTRY):
+
+                    # Leave a new state to start the execution of the part to be ignored by the rest
+                    ign_state = deepcopy(skip_state)
+                    ign_state.ignore = "ignore"
+                    returnable_new_states.append(ign_state)
+                    print("Leave ignore state to process")
+
+                    # set skip state to the next instruction that may again be a regular one
                     ign_exit_istr = self.get_ignore_tuple(skip_state, IType.ENTRY)[IType.EXIT.value]
                     istr_idx = self.instructions.index(ign_exit_istr)
                     skip_state.mstate.pc = istr_idx + 1
-
+                # After skip state finally reached an instruction that is not another entry it is marked as dublicate
                 skip_state.duplicate = "duplicate"
-
                 returnable_new_states.append(skip_state)
 
 
             # Is exit instruction
             if self.is_this_or_previouse_ignore_type(global_state, IType.EXIT) and not hasattr(global_state, "duplicate"):
                 print("Drop at exit")
-                return returnable_new_states
+                return returnable_new_states # Todo Drop only the ignored once at exit?
 #                if hasattr(new_state, 'saved_state'):
 #                    new_global_states[state_idx] = None
 #                else:
