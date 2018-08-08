@@ -1,5 +1,6 @@
 from enum import Enum
 from re import match
+from functools import reduce
 from .codeparser import find_matching_closed_bracket, get_pos_line_col
 from .coderewriter import expand_rew, after_implicit_block, get_exp_block_brack_pos, get_editor_indexed_rewriting
 
@@ -70,6 +71,13 @@ def increase_rewritten_pos(ano_rewritings, rewriting, nwl_type="\n"):
                 else:
                     ano_rewriting.col += len(rewriting.text)
 
+def is_mapping_inside_rew(mapping, rewriting):
+    return is_mapping_inside_range(mapping, rewriting.pos, rewriting.pos + len(rewriting.text))
+
+def is_mapping_inside_range(mapping, start_pos, end_pos):
+    # mapping.lineno == rewriting.line and
+    return mapping.offset >= start_pos and mapping.offset < end_pos and mapping.length + mapping.offset <= end_pos
+
 
 class Status(Enum):
     HOLDS = 1
@@ -115,30 +123,46 @@ class Annotation:
             if rewriting_rt != 'c':
                 for m_idx in range(len(self.annotation_contract.mappings)):
                     mapping = self.annotation_contract.mappings[m_idx]
-                    if mapping.lineno == rewriting.line and mapping.offset >= rewriting.pos and mapping.length <= len(rewriting.text):
+
+                    if is_mapping_inside_rew(mapping, rewriting):
                         instr = self.annotation_contract.disassembly.instruction_list[m_idx]
                         rew_asm.append(instr)
                         if not enter_instr:
                             enter_instr = instr
+                            instr['is'] = "Enter"
                             rewriting_rt = 't'
-                        if instr['opcode'] == 'JUMPDEST':
-                            exit_instr = instr
-                        elif instr['opcode'] == 'ASSERT_FAIL':
+
+                        if instr['opcode'] == 'ASSERT_FAIL':
+                            instr['line'] = mapping.lineno
                             viol_instr = instr
+                            instr['is'] = "Violation"
+
+                        if 'is' not in instr:
+                            instr['is'] = 'Ignore'
 
             if rewriting_rt != 't':
                 for m_idx in range(len(self.annotation_contract.creation_mappings)):
                     mapping = self.annotation_contract.creation_mappings[m_idx]
-                    if mapping.lineno == rewriting.line and mapping.offset >= rewriting.pos and mapping.length <= len(rewriting.text):
+
+                    if is_mapping_inside_rew(mapping, rewriting):
                         instr = self.annotation_contract.creation_disassembly.instruction_list[m_idx]
                         rew_asm.append(instr)
                         if not enter_instr:
                             enter_instr = instr
+                            instr['is'] = "Enter"
                             rewriting_rt = 'c'
-                        if instr['opcode'] == 'JUMPDEST':
-                            exit_instr = instr
-                        elif instr['opcode'] == 'ASSERT_FAIL':
+
+                        if instr['opcode'] == 'ASSERT_FAIL':
+                            instr['line'] = mapping.lineno
                             viol_instr = instr
+                            instr['is'] = "Violation"
+
+                        if 'is' not in instr:
+                            instr['is'] = 'Ignore'
+
+            if rew_asm:
+                exit_instr = reduce(lambda x, y: y if y['address'] > x['address'] else x, rew_asm)
+                exit_instr['is'] = 'Exit'
 
             self.viol_rew_instrs.append(rew_asm)
 
@@ -147,6 +171,7 @@ class Annotation:
             self.enter_inst.append(enter_instr)
 
             self.viol_rts.append(rewriting_rt)
+        print()
 
     def set_violations(self, violations, src_mapping): # Ads new violations to this annotation and sets the status, can be called multiple times
         self.violations.extend([(violation, src_mapping) for violation in violations])

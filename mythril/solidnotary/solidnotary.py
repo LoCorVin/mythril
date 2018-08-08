@@ -21,6 +21,7 @@ from mythril.laser.ethereum.state import MachineState
 from shutil import rmtree, copy
 from re import findall, sub, DOTALL
 from copy import deepcopy
+from functools import reduce
 
 project_name = "solidnotary"
 
@@ -82,8 +83,10 @@ def replace_index(text, toReplace, replacement, index):
 
 def get_sourcecode_and_mapping(address, instr_list, mappings):
     index = helper.get_instruction_index(instr_list, address)
-    return mappings[index]
-
+    if len(mappings) > index:
+        return mappings[index]
+    else:
+        return None
 
 
 def get_containing_file(contract):
@@ -359,7 +362,7 @@ class SolidNotary:
 
     def get_regular_traces(self, contract):
         contr_to_const = deepcopy(contract)
-        contr_to_const.disassembly = Disassembly(contr_to_const.creation_code)
+        contr_to_const.disassembly = contract.creation_disassembly
         contr_to_const.code = contr_to_const.creation_code
         dynloader = DynLoader(self.eth) if self.dynld else None
         glbstate = get_constr_glbstate(contr_to_const, self.address)
@@ -380,14 +383,36 @@ class SolidNotary:
             create_ignore_list.extend(annotation.get_creation_ignore_list())
             trans_ignore_list.extend(annotation.get_trans_ignore_list())
 
+        #print("Construction")
+        #for instr in contr_to_const.disassembly.instruction_list:
+        #    ret = get_sourcecode_and_mapping(instr['address'], contr_to_const.disassembly.instruction_list, contract.creation_mappings)
+        #    if ret:
+        #        code = get_containing_file(contract).data[ret.offset:ret.offset + ret.length].replace('\n', "  ")
+        #        print(str(instr) + "       " + code)
+        #    else:
+        #        print(instr)
+        #print("Transaction")
+        #for instr in contract.disassembly.instruction_list:
+        #    ret = get_sourcecode_and_mapping(instr['address'], contract.disassembly.instruction_list, contract.mappings)
+        #    if ret:
+        #        code = get_containing_file(contract).data[ret.offset:ret.offset + ret.length].replace('\n', "  ")
+        #        print(str(instr) + "       " + code)
+        #    else:
+        #        print(instr)
+        #print()
+
         create_annotationsProcessor = AnnotationProcessor(contr_to_const.disassembly.instruction_list, create_ignore_list)
         trans_annotationsProcessor = AnnotationProcessor(contract.disassembly.instruction_list, trans_ignore_list)
 
         # Symbolic execution of construction and transactions
+        print("Constructor")
         sym_creation = SymExecWrapper(contr_to_const, self.address, laser_strategy, dynloader, self.max_depth,
                                          glbstate=glbstate, prepostprocessor=create_annotationsProcessor)
+        print("Transactions")
         sym_transactions = SymExecWrapper(contract, self.address, laser_strategy, dynloader, max_depth=self.max_depth,
                                           prepostprocessor=trans_annotationsProcessor)
+        print("Constructor violations: " + str(len(reduce(lambda x, y: x + y, create_annotationsProcessor.violations))))
+        print("Transaction violations: " + str(len(reduce(lambda x, y: x + y, trans_annotationsProcessor.violations))))
 
         for ign_idx in range(len(trans_ignore_list)):
             annotation = trans_ignore_list[ign_idx][4]

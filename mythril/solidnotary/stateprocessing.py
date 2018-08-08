@@ -1,6 +1,16 @@
 from mythril.laser.ethereum.strategy.basic import DepthFirstSearchStrategy
 from mythril.laser.ethereum.svm import SVMError
 from copy import deepcopy
+from enum import Enum
+from z3 import simplify
+from .z3utility import are_z3_satisfiable
+
+
+# Instruction ignore type
+class IType(Enum):
+    ENTRY = 0
+    EXIT = 1
+    VIOLATION = 2
 
 class PrePostProcessor:
 
@@ -49,23 +59,46 @@ class AnnotationProcessor(PrePostProcessor):
     def filter(self, new_states):
         return list(filter(lambda state: not hasattr(state, "saved_state"), new_states))
 
+    def is_this_or_previouse_ignore_type(self, global_state, itype=IType.ENTRY):
+        instructions = global_state.environment.code.instruction_list
+        instr = instructions[global_state.mstate.pc]
+
+        ignore_tuples = [ign_tuple for ign_tuple in self.ignore_list if ign_tuple[itype.value] == instr]
+        if not ignore_tuples and instructions[global_state.mstate.pc - 1]['opcode'] == 'JUMPDEST':
+            # print("Handle pre jumpdest")
+            jumpdest_istr = instructions[global_state.mstate.pc - 1]
+            ignore_tuples = [ign_tuple for ign_tuple in self.ignore_list if ign_tuple[itype.value] == jumpdest_istr]
+        return ignore_tuples is not None and len(ignore_tuples) > 0
+
+    def get_ignore_tuple(self, global_state, itype=IType.ENTRY):
+        instructions = global_state.environment.code.instruction_list
+        instr = instructions[global_state.mstate.pc]
+
+        ignore_tuples = [ign_tuple for ign_tuple in self.ignore_list if ign_tuple[itype.value] == instr]
+        if not ignore_tuples and instructions[global_state.mstate.pc - 1]['opcode'] == 'JUMPDEST':
+            jumpdest_istr = instructions[global_state.mstate.pc - 1]
+            ignore_tuples = [ign_tuple for ign_tuple in self.ignore_list if ign_tuple[itype.value] == jumpdest_istr]
+        if not ignore_tuples:
+            return None
+        return ignore_tuples[0]
+
     def preprocess(self, global_state):
         instructions = global_state.environment.code.instruction_list
         instr = instructions[global_state.mstate.pc]
-        if instr['opcode'] in ["STOP", "RETURN"]:
-            print(instr)
-        ignore_tuples = [ign_tuple for ign_tuple in self.ignore_list if ign_tuple[0] == instr]
-        if not ignore_tuples and instructions[global_state.mstate.pc - 1]['opcode'] == 'JUMPDEST':
-            print("Handle pre jumpdest")
-            jumpdest_istr = instructions[global_state.mstate.pc - 1]
-            ignore_tuples = [ign_tuple for ign_tuple in self.ignore_list if ign_tuple[0] == jumpdest_istr]
-        if ignore_tuples:
+        if instr['address'] == 71:
+            print()
+
+        if hasattr(global_state, "duplicate"):
+            print("Pick up duplicate")
+        print(instr)
+        if self.is_this_or_previouse_ignore_type(global_state, IType.ENTRY):
             if hasattr(global_state, 'saved_state'): # Skip
                 print("Skip")
-                ign_exit_istr = ignore_tuples[0][1]
+                ign_exit_istr = self.get_ignore_tuple(global_state, IType.ENTRY)[IType.EXIT.value]
                 istr_idx = instructions.index(ign_exit_istr)
                 global_state.mstate.pc = istr_idx + 1
             else: # Save
+                # Todo Here we do now only MARK the state to be ignored
                 print("Save")
                 helper_state_ref = global_state
                 global_state = deepcopy(helper_state_ref)
@@ -73,44 +106,61 @@ class AnnotationProcessor(PrePostProcessor):
                 global_state.id = self.state_ctr
                 self.state_ctr += 1
 
-        ignore_tuples = [ign_tuple for ign_tuple in self.ignore_list if ign_tuple[2] == instr]
-        if ignore_tuples: # violation
-            self.violations[self.ignore_list.index(ignore_tuples[0])].append(deepcopy(global_state))
+        if self.is_this_or_previouse_ignore_type(global_state, IType.VIOLATION): # violation
+            print("violation")
+            for idx in range(len(global_state.mstate.constraints)):
+                global_state.mstate.constraints[idx] = simplify(global_state.mstate.constraints[idx])
+            if are_z3_satisfiable(global_state.mstate.constraints):
+                violating_state = deepcopy(global_state)
+                del violating_state.saved_state # Todo Why do we delete this here? I think we need the mark to ignore it in graph building
+                self.violations[self.ignore_list.index(self.get_ignore_tuple(global_state, IType.VIOLATION))].append(violating_state)
 
         return global_state
 
     def postprocess(self, global_state, new_global_states):
+        returnable_new_states = []
         # Had to be added, because treatment of a single instruction does not carry over added attributes
         if hasattr(global_state, 'saved_state'): # Carry
             print("carry")
             for new_state in new_global_states:
                 new_state.saved_state = global_state.saved_state
                 new_state.id = global_state.id
-        else:
-            print("Nothing to carry")
+
+        for new_state in new_global_states:
+            if hasattr(new_state, "duplicate"):
+                del new_state.duplicate
+        #else:
+            #print("Nothing to carry")
 
         for state_idx in range(len(new_global_states)):
             new_state = new_global_states[state_idx]
             instr = self.instructions[global_state.mstate.pc]
-            ignore_tuples = [ign_tuple for ign_tuple in self.ignore_list if ign_tuple[1] == instr]
-            if not ignore_tuples and self.instructions[new_state.mstate.pc - 1]['opcode'] == 'JUMPDEST':
-                jumpdest_istr = self.instructions[new_state.mstate.pc - 1] # exit if jumpdest is exit
-                ignore_tuples = [ign_tuple for ign_tuple in self.ignore_list if ign_tuple[1] == jumpdest_istr]
-            if ignore_tuples:
-                if hasattr(new_state, 'saved_state'):
-                    if new_state.id in self.restored_ids: # Dont recover if already done
-                        print("Dont recover")
-                        new_global_states[state_idx] = None
-                    else: # Recover saved state on exit
-                        print("Recover")
-                        new_global_states[state_idx] = new_state.saved_state
-                        new_global_states[state_idx].mstate.pc = new_state.mstate.pc
-                        self.restored_ids.append(new_state.id)
-                else:
-                    raise RuntimeError("No saved global state at encounter of exit instruction. This should not happen")
 
-            new_global_states = list(filter(lambda state: state is not None, new_global_states))
+            if self.is_this_or_previouse_ignore_type(new_state, IType.ENTRY):
+                print("Duplicate new")
+                skip_state = deepcopy(new_state)
 
-        return new_global_states
+                while self.is_this_or_previouse_ignore_type(skip_state, IType.ENTRY):
+                    ign_exit_istr = self.get_ignore_tuple(skip_state, IType.ENTRY)[IType.EXIT.value]
+                    istr_idx = self.instructions.index(ign_exit_istr)
+                    skip_state.mstate.pc = istr_idx + 1
+
+                skip_state.duplicate = "duplicate"
+
+                returnable_new_states.append(skip_state)
+
+
+            # Is exit instruction
+            if self.is_this_or_previouse_ignore_type(global_state, IType.EXIT) and not hasattr(global_state, "duplicate"):
+                print("Drop at exit")
+                return returnable_new_states
+#                if hasattr(new_state, 'saved_state'):
+#                    new_global_states[state_idx] = None
+#                else:
+#                    raise RuntimeError("No saved global state at encounter of exit instruction. This should not happen")
+
+        returnable_new_states.extend(list(filter(lambda state: state is not None, new_global_states)))
+
+        return returnable_new_states
 
 
