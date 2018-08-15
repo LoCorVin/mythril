@@ -157,8 +157,3 @@ def get_exp_block_brack_pos(origin_code, idx):
         iter_idx += 1
 
     return start, end
-
-
-with open("comment_test.sol", 'r', encoding="utf-8") as file:
-    code = file.read()
-print(replace_comments_with_whitespace(code))

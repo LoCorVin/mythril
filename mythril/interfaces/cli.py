@@ -164,7 +164,7 @@ def main():
             #if args.graph and len(args.solidity_file) > 1:
             #    exit_with_error(args.outform,
             #                    "Cannot generate call graphs from multiple input files. Please do it one at a time.")
-            print(args.solidity_file)
+
             if args.annotations:
                 solidnotary = SolidNotary(solc_args=args.solc_args)
                 solidnotary.create_tmp_dir()
@@ -224,7 +224,8 @@ def main():
         if args.annotations:
             if not mythril.contracts:
                 exit_with_error(args.outform, "input files do not contain any valid contracts")
-            solidnotary.provide_resources(mythril.contracts, address, mythril.eth, mythril.dynld, args.max_depth)
+
+            solidnotary.provide_resources(mythril.contracts, address, mythril.eth, mythril.dynld, mythril.sigs)
             solidnotary.parse_annotations()
             solidnotary.check_annotations()
             solidnotary.delete_tmp_dir()

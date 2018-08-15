@@ -1,18 +1,19 @@
 import logging
+from ethereum import utils
 from mythril.solidnotary.transactiontrace import TransactionTrace
 from mythril.solidnotary.z3utility import are_z3_satisfiable
 from mythril.analysis.symbolic import SymExecWrapper
 from mythril.support.loader import DynLoader
 from mythril.ether.soliditycontract import SolidityContract, SourceCodeInfo
 from mythril.disassembler.disassembly import Disassembly
-from mythril.solidnotary.calldata import get_minimal_constructor_param_encoding_len, abi_json_to_abi
+from mythril.solidnotary.calldata import get_minimal_constructor_param_encoding_len, abi_json_to_abi, get_calldata_name_map
 from mythril.solidnotary.coderewriter import write_code, get_code, \
     replace_comments_with_whitespace, apply_rewriting
 from .codeparser import find_matching_closed_bracket, newlines, get_newlinetype
 from .stateprocessing import AnnotationProcessor
 import mythril.laser.ethereum.util as helper
 from mythril.solidnotary.annotation import annotation_kw, init_annotation, increase_rewritten_pos, comment_out_annotations, expand_rew
-from z3 import BitVec,eq
+from z3 import BitVec,eq, Extract, BitVecVal, simplify
 from os.path import exists, isdir, dirname, isfile, join
 from os import makedirs, chdir, listdir, getcwd
 from re import finditer, escape
@@ -31,7 +32,7 @@ laser_strategy = "dfs"
 
 class SolidityFunction:
 
-    def __init__(self, f_def):
+    def __init__(self, f_def, calldata_name_map):
         attributes = f_def['attributes']
 
         self.constant = attributes['constant']
@@ -42,7 +43,26 @@ class SolidityFunction:
         self.visibility = attributes['visibility']
         self.name = attributes['name']
         self.isConstructor = attributes['isConstructor']
+        self.params = []
 
+
+        parameter_list = get_all_nested_dicts_with_kv_pairs(f_def['children'], 'name', 'ParameterList')[0]
+        params = ""
+        for param in parameter_list['children']:
+            self.params.append((param['attributes']['name'], param['attributes']['type']))
+            params += param['attributes']['type'] + ","
+        if len(params) > 0:
+            params = params[:len(params)-1]
+        if self.isConstructor:
+            self.signature = "(" + params + ")"
+            self.hash = ""
+        else:
+            self.signature = self.name + "(" + params + ")"
+            self.hash = utils.sha3(self.signature)[:4].hex()
+
+        self.calldata_name_map = calldata_name_map[self.signature]
+
+        # Parses the positions in the function where exution might terminated due to a return
         self.terminating_pos = []
         returns = get_all_nested_dicts_with_kv_pairs(f_def, "name", "Return")
         for ret in returns:
@@ -50,14 +70,14 @@ class SolidityFunction:
             self.terminating_pos.append((int(pos_r[0]), int(pos_r[1])))
         self.return_types = []
         if returns:
+            # Finds return stmt and the id of the element holding the type information
             ret_param_id = returns[0]['attributes']['functionReturnParameters']
-
+            # finds the subelement holding the information on the return param types
             return_params = get_all_nested_dicts_with_kv_pairs(f_def, 'id', ret_param_id)[0]
-
             for child in return_params['children']:
                 if child['attributes']['type']:
                     self.return_types.append(child['attributes']['type'])
-
+        # Uses src attribute to find position in file
         pos = f_def['src'].split(':')
         if not is_last_stmt_a_return(f_def):
             self.terminating_pos.append((int(pos[0]) + int(pos[1]) - 1, 0))
@@ -143,6 +163,21 @@ def get_all_nested_dicts_with_kv_pairs(obj, key, value):
             dicts.extend(get_all_nested_dicts_with_kv_pairs(elem, key, value))
     return dicts
 
+def get_function_by_name(contract, name):
+    function_list = []
+    for function in contract.functions:
+        if function.name == name:
+            function_list.append(function)
+    return function_list
+
+def get_function_by_hash(contract, hash):
+    for function in contract.functions:
+        if function.hash == hash:
+            return function
+
+def getfunction_by_inthash(contract, value):
+    return get_function_by_hash(contract, value.hash())
+
 """
     Parses the ast to find all positions where a contract might terminate with a transactions execution.
 """
@@ -153,8 +188,9 @@ def augment_with_functions(contract):
     contract_asts = get_all_nested_dicts_with_kv_pairs(ast, "name", "ContractDefinition")
     contract_ast = list(filter(lambda c_ast: c_ast['attributes']['name'] == contract.name, contract_asts))[0]
     f_defs = get_all_nested_dicts_with_kv_pairs(contract_ast, "name", "FunctionDefinition")
+    contract.calldata_name_map = get_calldata_name_map(abi_json_to_abi(contract.abi))
     for f_def in f_defs:
-        contract.functions.append(SolidityFunction(f_def))
+        contract.functions.append(SolidityFunction(f_def, contract.calldata_name_map))
 
 
 def find_contract_idx_range(contract):
@@ -184,7 +220,6 @@ def get_sorting_priority(rew_text):
 def get_contract_code(contract):
     crange = find_contract_idx_range(contract)
     contract_code = get_containing_file(contract).data[crange[0]:crange[2]]
-    print(contract_code)
     return contract_code
 """
     Here it might be better to split annotations into the containing constraint an the prefix and sufix
@@ -268,12 +303,13 @@ class SolidNotary:
                 copy(full_file_name, self.tmp_dir)
                 # Todo consider subdirectories and symbolic links
 
-    def provide_resources(self, contracts, address, eth, dynld, max_depth):
+    def provide_resources(self, contracts, address, eth, dynld, sigs, max_depth=float('inf')):
         self.contracts = contracts
         self.address = address
         self.eth = eth
         self.dynld = dynld
         self.max_depth = max_depth
+        self.sigs = sigs
 
     def get_lineno_stop_inst(self):
         pass
@@ -353,6 +389,7 @@ class SolidNotary:
             write_code(sol_file.filename, rew_file_code)
 
             anotation_contract = SolidityContract(sol_file.filename, contract.name, solc_args=self.solc_args)
+            augment_with_functions(anotation_contract)
             self.annotated_contracts.append(anotation_contract)
 
             for annotation in self.annotation_map[contract.name]:
@@ -360,47 +397,45 @@ class SolidNotary:
 
             write_code(sol_file.filename, origin_file_code)
 
-    def get_regular_traces(self, contract):
+    def get_traces_and_build_violations(self, contract):
+
+        # Modified contract to symbolically execute the constructor
         contr_to_const = deepcopy(contract)
         contr_to_const.disassembly = contract.creation_disassembly
         contr_to_const.code = contr_to_const.creation_code
         dynloader = DynLoader(self.eth) if self.dynld else None
         glbstate = get_constr_glbstate(contr_to_const, self.address)
 
-#        for inst_idx in range(len(contract.disassembly.instruction_list)):
-#            instruction = contract.disassembly.instruction_list[inst_idx]
-#            mapping = contract.mappings[inst_idx]
-#            sc_info = contract.get_source_info(instruction['address'])
-#            print(str(instruction['address']) + " " + instruction['opcode'] + " ( " + str(mapping.length) + ", " + str(mapping.lineno)
-#                  + ", " + str(mapping.offset) + " )")
-#            print(sc_info.code)
-#            print()
-
+        # Building ignore lists for transactions and constructor executions
         create_ignore_list = []
         trans_ignore_list = []
-
         for annotation in self.annotation_map[contract.name]:
             create_ignore_list.extend(annotation.get_creation_ignore_list())
             trans_ignore_list.extend(annotation.get_trans_ignore_list())
 
-        #print("Construction")
+        counter = 0
+        #print("Constructor print")
         #for instr in contr_to_const.disassembly.instruction_list:
         #    ret = get_sourcecode_and_mapping(instr['address'], contr_to_const.disassembly.instruction_list, contract.creation_mappings)
         #    if ret:
         #        code = get_containing_file(contract).data[ret.offset:ret.offset + ret.length].replace('\n', "  ")
-        #        print(str(instr) + "       " + code)
+        #        print(str(counter) + " " + str(instr) + "       " + code)
         #    else:
         #        print(instr)
-        #print("Transaction")
+        #    counter += 1
+        #counter = 0
+        #print("Transaction print")
         #for instr in contract.disassembly.instruction_list:
         #    ret = get_sourcecode_and_mapping(instr['address'], contract.disassembly.instruction_list, contract.mappings)
         #    if ret:
         #        code = get_containing_file(contract).data[ret.offset:ret.offset + ret.length].replace('\n', "  ")
-        #        print(str(instr) + "       " + code)
+        #        print(str(counter) + " " + str(counter) + " " + str(instr) + "       " + code)
         #    else:
         #        print(instr)
+        #    counter += 1
         #print()
 
+        # Used to run annotations violation build in traces construction in parallel
         create_annotationsProcessor = AnnotationProcessor(contr_to_const.disassembly.instruction_list, create_ignore_list)
         trans_annotationsProcessor = AnnotationProcessor(contract.disassembly.instruction_list, trans_ignore_list)
 
@@ -411,32 +446,30 @@ class SolidNotary:
         print("Transactions")
         sym_transactions = SymExecWrapper(contract, self.address, laser_strategy, dynloader, max_depth=self.max_depth,
                                           prepostprocessor=trans_annotationsProcessor)
-        print("Constructor violations: " + str(len(reduce(lambda x, y: x + y, create_annotationsProcessor.violations))))
-        print("Transaction violations: " + str(len(reduce(lambda x, y: x + y, trans_annotationsProcessor.violations))))
+        print("Constructor violations: " + str(len(reduce(lambda x, y: x + y, create_annotationsProcessor.violations, []))))
+        print("Transaction violations: " + str(len(reduce(lambda x, y: x + y, trans_annotationsProcessor.violations, []))))
 
+        # Add found violations to the annotations they violated
         for ign_idx in range(len(trans_ignore_list)):
             annotation = trans_ignore_list[ign_idx][4]
             mapping = get_sourcecode_and_mapping(trans_ignore_list[ign_idx][2]['address'], contract.disassembly.instruction_list, contract.mappings)
-            annotation.set_violations(trans_annotationsProcessor.violations[ign_idx], mapping)
+            annotation.set_violations(trans_annotationsProcessor.violations[ign_idx], mapping, contract)
 
         for ign_idx in range(len(create_ignore_list)):
             annotation = create_ignore_list[ign_idx][4]
             mapping = get_sourcecode_and_mapping(create_ignore_list[ign_idx][2]['address'], contract.creation_disassembly.instruction_list, contract.creation_mappings)
-            annotation.set_violations(create_annotationsProcessor.violations[ign_idx], mapping)
+            annotation.set_violations(create_annotationsProcessor.violations[ign_idx], mapping, contract)
 
 
-        # Building of traces
+        # Build traces from the regular annotation ignoring global states
         create_traces = get_construction_traces(sym_creation)
-        trans_traces = get_transaction_traces(sym_transactions)
+        trans_traces = get_transaction_traces(sym_transactions, contract)
 
-        # Set violations to annotations
-
-        # violations = get_violations(sym_constructor, sym_transactions)
         return create_traces, trans_traces
 
-    def get_annotation_traces(self):
+    def build_traces_and_violations(self):
         for contract in self.annotated_contracts:
-            const_traces, trans_traces = self.get_regular_traces(contract)
+            const_traces, trans_traces = self.get_traces_and_build_violations(contract)
 
 
 
@@ -444,17 +477,13 @@ class SolidNotary:
     def check_annotations(self):
 
         self.build_annotated_contracts()
-        self.get_annotation_traces()
-        # Todo for both modes build ignore lists
-        # Todo for every contract build both sym-exe
-        
+        self.build_traces_and_violations()
 
-        logging.debug("Executing annotations check")
+        # Todo filter violations if the annotation is only broken if it was broken before
 
-        for contract in self.contracts:
+        # Todo Set status, perform trace chaining strategy. Update Status
 
-            # self.get_annotation_traces(contract)
-            print()
+        # Todo Return the annotations with violation information
 
 
     def enter_tmp_dir(self):
@@ -480,7 +509,7 @@ def is_storage_primitive(storage):
                 return False
     return True
 
-def get_transaction_traces(statespace):
+def get_transaction_traces(statespace, contract):
     print("get_transaction_traces")
     num_elimi_traces= 0
     traces = []
@@ -496,7 +525,10 @@ def get_transaction_traces(statespace):
             if instruction['opcode'] in ["STOP", "RETURN"]:
                 storage = state.environment.active_account.storage
                 if storage and not is_storage_primitive(storage) and are_z3_satisfiable(state.mstate.constraints):
-                    traces.append(TransactionTrace(state.environment.active_account.storage, state.mstate.constraints))
+
+                    trace = TransactionTrace(state.environment.active_account.storage, state.mstate.constraints, contract)
+
+                    traces.append(trace)
                 else:
                     num_elimi_traces += 1
     print("Transaction traces: " + str(len(traces)) + " eliminated: " + str(num_elimi_traces))
@@ -532,7 +564,8 @@ def get_constr_glbstate(contract, address):
     # params into memory takes care of placing them onto the memory with the respective size.
     for i in range(int(minimal_const_byte_len / 32)):
         mstate.mem_extend(128 + 32 * i, 32)
-        mstate.memory.insert(128 + 32 * i, BitVec('calldata_' + contract.name + '_' + str(i * 32), 256))
+        mstate.memory.insert(128 + 32 * i, BitVec('calldata_' + contract.name + '[' + str(i * 32)+ "]", 256))
+
 
     # Todo Replace pure placement of enough symbolic 32 Byte-words with placement of symbolic variables that contain
     # the name of the solidity variables

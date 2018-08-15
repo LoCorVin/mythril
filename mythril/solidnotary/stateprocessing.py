@@ -59,10 +59,7 @@ class AnnotationProcessor(PrePostProcessor):
     def filter(self, new_states):
         ret_states = []
         for state in new_states:
-            if hasattr(state, "ignore"):
-                if state.get_current_instruction()['opcode'] == 'RETURN':
-                    print()
-            else:
+            if not hasattr(state, "ignore"):
                 ret_states.append(state)
         return ret_states
 

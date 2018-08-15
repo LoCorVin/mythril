@@ -1,8 +1,10 @@
 from enum import Enum
 from re import match
 from functools import reduce
+from .transactiontrace import TransactionTrace
 from .codeparser import find_matching_closed_bracket, get_pos_line_col
 from .coderewriter import expand_rew, after_implicit_block, get_exp_block_brack_pos, get_editor_indexed_rewriting
+from .z3utility import get_function_from_constraint
 
 
 
@@ -80,11 +82,27 @@ def is_mapping_inside_range(mapping, start_pos, end_pos):
 
 
 class Status(Enum):
-    HOLDS = 1
-    UNCHECKED = 2
-    VSINGLE = 3
-    VDEPTH = 4
-    VCHAIN = 5
+    HOLDS = 1 # SAT solver did not find any possible violation
+    UNCHECKED = 2 # Execution still has to run
+    HSINGLE = 3 # There is a violation but it contains references to storage (maybe a false positive to be ruled out)
+    VDEPTH = 4 # Transaction chaining according to some strategy did not find a chain with constructor in the beginning
+    VCHAIN = 5 # Chain with violation in the end and construction trace in the beginning found
+    VSINGLE = 6 # violation with no references to storage found.
+
+    # Todo When chaining the same as with single violations can happen, when the constraints do not contain ref. to
+    # Todo Storage anymore, the chain does not have to be completed with a construction trace at the beginning
+
+    # Maybe an additional status: Violating constraints and or storage reference only prev. trans vals or do it in a way
+    # that the violation must have existed before the transaction execution.
+
+
+class Violation:
+
+    def __init__(self, violation, src_mapping, contract):
+        self.trace = TransactionTrace(violation.environment.active_account.storage, violation.mstate.constraints, contract)
+        self.src_mapping = src_mapping
+        self.contract = contract
+
 
 class Annotation:
 
@@ -173,9 +191,11 @@ class Annotation:
             self.viol_rts.append(rewriting_rt)
         print()
 
-    def set_violations(self, violations, src_mapping): # Ads new violations to this annotation and sets the status, can be called multiple times
-        self.violations.extend([(violation, src_mapping) for violation in violations])
-        self.status = Status.VSINGLE if self.violations else Status.HOLDS
+    def set_violations(self, violations, src_mapping, contract): # Ads new violations to this annotation and sets the status, can be called multiple times
+        self.violations.extend([Violation(violation, src_mapping, contract) for violation in violations])
+        # Todo Some violations might already be fulfilled without refering to storage(dependencies of other contracts)
+        # Todo and thus not need transaction chaining verification
+        self.status = Status.HSINGLE if self.violations else Status.HOLDS
 
     def get_creation_ignore_list(self):
         return [(val0, val1, val2, val3, self) for val0, val1, val2, val3, val4 in list(zip(self.enter_inst, self.exit_inst, self.viol_inst, self.viol_rew_instrs, self.viol_rts)) if val4 == 'c']

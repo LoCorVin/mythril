@@ -1,4 +1,4 @@
-from z3 import Solver, sat, simplify, is_bool, is_true, is_false
+from z3 import Solver, sat, eq, simplify, is_bool, is_true, is_false, Extract, BitVec
 from copy import deepcopy
 
 """
@@ -49,10 +49,16 @@ def are_z3_satisfiable(z3_constraints):
         s.add(c)
     return s.check() == sat
 
-def simplify_z3_constraints(constraints): # Todo simplification of the sum of constraints
+def simplify_constraints_individually(constraints):
     simp_const = []
     for const in constraints:
         simp_const.append(simplify(const))
+    return simp_const
+
+
+def simplify_z3_constraints(constraints): # Todo simplification of the sum of constraints
+    simp_const = constraints
+    # simp_const = simplify_constraints_individually(constraints)
     simp_const = list(filter(lambda c: not is_bool(c) or not is_true(c), simp_const))
     falses = list(filter(lambda c: is_bool(c) and is_false(c), simp_const))
     if len(falses) > 0:
@@ -80,3 +86,17 @@ def extract_sym_names(obj):
         for c in obj.children():
             sym_vars.extend(extract_sym_names(c))
         return sym_vars
+
+'''
+    If None is returned the function that is searched is the default function or the constructor
+'''
+def get_function_from_constraint(contract, constraints):
+    for constraint in constraints:
+        for func in contract.functions:
+            if len(func.hash) > 0:
+                function_constraint = Extract(255, 224,
+                                              BitVec('calldata_' + contract.name + "[0]", 256)) == int(func.hash,
+                                                                                                       16)
+                if eq(simplify(function_constraint), constraint):
+                    return func
+    return None

@@ -1,4 +1,5 @@
 from z3 import *
+from .z3utility import get_function_from_constraint, simplify_constraints_individually
 from copy import deepcopy
 import re
 from mythril.solidnotary.z3utility import are_satisfiable, simplify_constraints, simplify_z3_constraints, \
@@ -29,11 +30,16 @@ def flatten(list_to_flatten):
 
 class TransactionTrace:
 
-    def __init__(self, storage, constraints, lvl=1):
-        self.storage = deepcopy(storage) # Todo give all non storage symbolic values that can be different every transaction the number one
-        self.constraints = constraints
+    def __init__(self, storage, constraints, contract=None, lvl=1):
+        self.storage = deepcopy(storage)
+        self.constraints = simplify_constraints_individually(constraints)
+        if contract:
+            self.function = get_function_from_constraint(contract, self.constraints)
+
         # eliminate all constraints that only contain names not in the set of names from storage
         self.constraints = simplify_z3_constraints(self.constraints) # Todo simplification of the sum of constraints
+
+
 
         # Or hook transformation in here
         self.storage = {s_name: Slot(s_name, z3_vars) for (s_name, z3_vars) in self.storage.items()}
