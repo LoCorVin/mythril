@@ -4,7 +4,7 @@ from mythril.analysis.callgraph import generate_graph
 from mythril.ether.ethcontract import ETHContract
 from mythril.ether.soliditycontract import SolidityContract
 
-from mythril.laser.ethereum.state import GlobalState, MachineState
+from mythril.laser.ethereum.state import GlobalState, MachineState, Account
 from mythril.laser.ethereum import svm
 from tests import *
 
@@ -18,7 +18,7 @@ class LaserEncoder(json.JSONEncoder):
 
 def _all_info(laser):
     accounts = {}
-    for address, _account in laser.accounts.items():
+    for address, _account in laser.world_state.accounts.items():
         account = _account.as_dict
         account["code"] = account["code"].instruction_list
         account['balance'] = str(account['balance'])
@@ -74,7 +74,7 @@ class SVMTestCase(BaseTestCase):
             output_current = TESTDATA_OUTPUTS_CURRENT_LASER_RESULT / (input_file.name + ".json")
 
             disassembly = SolidityContract(str(input_file)).disassembly
-            account = svm.Account("0x0000000000000000000000000000000000000000", disassembly)
+            account = Account("0x0000000000000000000000000000000000000000", disassembly)
             accounts = {account.address: account}
 
             laser = svm.LaserEVM(accounts, max_depth=22)

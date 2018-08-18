@@ -1,10 +1,12 @@
 import os
+from pathlib import PurePath
 import re
 import sys
 import json
 import logging
 from mythril.ether.ethcontract import ETHContract
 from mythril.ether.soliditycontract import SourceMapping
+from mythril.exceptions import CriticalError
 from mythril.analysis.security import fire_lasers
 from mythril.analysis.symbolic import SymExecWrapper
 from mythril.analysis.report import Report
@@ -13,7 +15,7 @@ from mythril.ether import util
 from mythril.laser.ethereum.util import get_instruction_index
 
 
-def analyze_truffle_project(args):
+def analyze_truffle_project(sigs, args):
 
     project_root = os.getcwd()
 
@@ -31,12 +33,15 @@ def analyze_truffle_project(args):
             try:
                 name = contractdata['contractName']
                 bytecode = contractdata['deployedBytecode']
-            except:
+                filename = PurePath(contractdata['sourcePath']).name
+            except KeyError:
                 print("Unable to parse contract data. Please use Truffle 4 to compile your project.")
                 sys.exit()
-
-            if (len(bytecode) < 4):
+            if len(bytecode) < 4:
                 continue
+
+            sigs.import_from_solidity_source(contractdata['sourcePath'])
+            sigs.write()
 
             ethcontract = ETHContract(bytecode, name=name)
 
@@ -45,7 +50,7 @@ def analyze_truffle_project(args):
             issues = fire_lasers(sym)
 
             if not len(issues):
-                if (args.outform == 'text' or args.outform == 'markdown'):
+                if args.outform == 'text' or args.outform == 'markdown':
                     print("# Analysis result for " + name + "\n\nNo issues found.")
                 else:
                     result = {'contract': name, 'result': {'success': True, 'error': None, 'issues': []}}
@@ -58,11 +63,11 @@ def analyze_truffle_project(args):
                 disassembly = ethcontract.disassembly
                 source = contractdata['source']
 
-                deployedSourceMap = contractdata['deployedSourceMap'].split(";")
+                deployed_source_map = contractdata['deployedSourceMap'].split(";")
 
                 mappings = []
 
-                for item in deployedSourceMap:
+                for item in deployed_source_map:
                     mapping = item.split(":")
 
                     if len(mapping) > 0 and len(mapping[0]) > 0:
@@ -74,7 +79,7 @@ def analyze_truffle_project(args):
                     if len(mapping) > 2 and len(mapping[2]) > 0:
                         idx = int(mapping[2])
 
-                    lineno = source[0:offset].count('\n') + 1
+                    lineno = source.encode('utf-8')[0:offset].count('\n'.encode('utf-8')) + 1
 
                     mappings.append(SourceMapping(idx, offset, length, lineno))
 
@@ -88,20 +93,20 @@ def analyze_truffle_project(args):
                                 length = mappings[index].length
 
                                 issue.filename = filename
-                                issue.code = source[offset:offset + length]
+                                issue.code = source.encode('utf-8')[offset:offset + length].decode('utf-8')
                                 issue.lineno = mappings[index].lineno
                             except IndexError:
                                 logging.debug("No code mapping at index %d", index)
 
                     report.append_issue(issue)
 
-                if (args.outform == 'json'):
+                if args.outform == 'json':
 
                     result = {'contract': name, 'result': {'success': True, 'error': None, 'issues': list(map(lambda x: x.as_dict, issues))}}
                     print(json.dumps(result))
 
                 else:
-                    if (args.outform == 'text'):
+                    if args.outform == 'text':
                         print("# Analysis result for " + name + ":\n\n" + report.as_text())
-                    elif (args.outform == 'markdown'):
+                    elif args.outform == 'markdown':
                         print(report.as_markdown())

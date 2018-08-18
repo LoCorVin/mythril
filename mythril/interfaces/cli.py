@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: UTF-8 -*-
+# -*- coding: utf-8 -*-
 """mythril.py: Bug hunting on the Ethereum blockchain
 
    http://www.github.com/ConsenSys/mythril
@@ -13,8 +13,9 @@ from mythril.solidnotary.solidnotary import SolidNotary
 
 # logging.basicConfig(level=logging.DEBUG)
 
-from mythril.exceptions import CriticalError
+from mythril.exceptions import CriticalError, AddressNotFoundError
 from mythril.mythril import Mythril
+from mythril.version import VERSION
 
 
 def exit_with_error(format, message):
@@ -32,6 +33,8 @@ def main():
 
     commands = parser.add_argument_group('commands')
     commands.add_argument('-g', '--graph', help='generate a control flow graph')
+    commands.add_argument('-V', '--version', action='store_true',
+                          help='print the Mythril version number and exit')
     commands.add_argument('-x', '--fire-lasers', action='store_true',
                           help='detect vulnerabilities, use with -c, -a or solidity file(s)')
 
@@ -49,7 +52,7 @@ def main():
 
     outputs = parser.add_argument_group('output formats')
     outputs.add_argument('-o', '--outform', choices=['text', 'markdown', 'json'], default='text',
-                         help='report output format', metavar='<text/json>')
+                         help='report output format', metavar='<text/markdown/json>')
     outputs.add_argument('--verbose-report', action='store_true', help='Include debugging information in report')
 
     database = parser.add_argument_group('local contracts database')
@@ -63,15 +66,13 @@ def main():
     utilities.add_argument('--solv',
                            help='specify solidity compiler version. If not present, will try to install it (Experimental)',
                            metavar='SOLV')
+    utilities.add_argument('--contract-hash-to-address', help='returns corresponding address for a contract address hash', metavar='SHA3_TO_LOOK_FOR')
 
     options = parser.add_argument_group('options')
     options.add_argument('-m', '--modules', help='Comma-separated list of security analysis modules', metavar='MODULES')
     options.add_argument('--max-depth', type=int, default=22, help='Maximum recursion depth for symbolic execution')
-    options.add_argument('--execution-timeout', type=int, default=600, help="The amount of seconds to spend on "
-                                                                           "symbolic execution")
-    outputs.add_argument('--strategy', choices=['dfs', 'bfs'], default='dfs',
-                         help='Symbolic execution strategy')
-
+    options.add_argument('--strategy', choices=['dfs', 'bfs'], default='dfs', help='Symbolic execution strategy')
+    options.add_argument('--execution-timeout', type=int, default=600, help="The amount of seconds to spend on symbolic execution")
     options.add_argument('--solc-args', help='Extra arguments for solc')
     options.add_argument('--phrack', action='store_true', help='Phrack-style call graph')
     options.add_argument('--enable-physics', action='store_true', help='enable graph physics simulation')
@@ -81,23 +82,22 @@ def main():
     rpc.add_argument('-i', action='store_true', help='Preset: Infura Node service (Mainnet)')
     rpc.add_argument('--rpc', help='custom RPC settings', metavar='HOST:PORT / ganache / infura-[network_name]')
     rpc.add_argument('--rpctls', type=bool, default=False, help='RPC connection over TLS')
-    rpc.add_argument('--ipc', action='store_true', help='Connect via local IPC')
-    rpc.add_argument('--leveldb', action='store_true', help='Enable direct leveldb access operations')
 
     # Get config values
 
     args = parser.parse_args()
 
-    # -- args sanity checks --
-    # Detect unsupported combinations of command line args
-
-    if args.dynld and not args.address:
-        exit_with_error(args.outform, "Dynamic loader can be used in on-chain analysis mode only (-a).")
+    if args.version:
+        if args.outform == 'json':
+            print(json.dumps({'version_str': VERSION}))
+        else:
+            print("Mythril version {}".format(VERSION))
+        sys.exit()
 
     # Parse cmdline args
 
-    if not (args.search or args.hash or args.disassemble or args.graph or args.fire_lasers or args.annotations
-            or args.storage or args.truffle or args.statespace_json):
+    if not (args.search or args.hash or args.disassemble or args.graph or args.fire_lasers
+            or args.storage or args.truffle or args.statespace_json or args.contract_hash_to_address or args.annotations):
         parser.print_help()
         sys.exit()
 
@@ -112,33 +112,40 @@ def main():
         print(Mythril.hash_for_function_signature(args.hash))
         sys.exit()
 
-
     try:
         # the mythril object should be our main interface
-        #infura = None, rpc = None, rpctls = None, ipc = None,
-        #solc_args = None, dynld = None, max_recursion_depth = 12):
-
+        # infura = None, rpc = None, rpctls = None
+        # solc_args = None, dynld = None, max_recursion_depth = 12):
 
         mythril = Mythril(solv=args.solv, dynld=args.dynld,
                           solc_args=args.solc_args)
+        if args.dynld and not (args.rpc or args.i):
+            mythril.set_api_from_config_path()
 
-        if args.address and not args.leveldb:
+        if args.address:
             # Establish RPC/IPC connection if necessary
             if args.i:
                 mythril.set_api_rpc_infura()
             elif args.rpc:
                 mythril.set_api_rpc(rpc=args.rpc, rpctls=args.rpctls)
-            elif args.ipc:
-                mythril.set_api_ipc()
-            else:
+            elif not args.dynld:
                 mythril.set_api_rpc_localhost()
-        elif args.leveldb or args.search:
+        elif args.search or args.contract_hash_to_address:
             # Open LevelDB if necessary
             mythril.set_api_leveldb(mythril.leveldb_dir if not args.leveldb_dir else args.leveldb_dir)
 
         if args.search:
             # Database search ops
             mythril.search_db(args.search)
+            sys.exit()
+
+        if args.contract_hash_to_address:
+            # search corresponding address
+            try:
+                mythril.contract_hash_to_address(args.contract_hash_to_address)
+            except AddressNotFoundError:
+                print("Address not found.")
+
             sys.exit()
 
         if args.truffle:
@@ -161,10 +168,9 @@ def main():
             address, _ = mythril.load_from_address(args.address)
         elif args.solidity_file:
             # Compile Solidity source file(s)
-            #if args.graph and len(args.solidity_file) > 1:
-            #    exit_with_error(args.outform,
-            #                    "Cannot generate call graphs from multiple input files. Please do it one at a time.")
-
+            if args.graph and len(args.solidity_file) > 1:
+                exit_with_error(args.outform,
+                                "Cannot generate call graphs from multiple input files. Please do it one at a time.")
             if args.annotations:
                 solidnotary = SolidNotary(solc_args=args.solc_args)
                 solidnotary.create_tmp_dir()
@@ -173,7 +179,7 @@ def main():
 
                 # create new subdirectory
                 # change working direktory or append path to current source files
-                # do necessary conversions of filenames
+                # do necessary conversions of filenames            
             address, _ = mythril.load_from_solidity(args.solidity_file)  # list of files
         else:
             exit_with_error(args.outform,
@@ -201,7 +207,7 @@ def main():
             if args.graph:
                 html = mythril.graph_html(strategy=args.strategy, contract=mythril.contracts[0], address=address,
                                           enable_physics=args.enable_physics, phrackify=args.phrack,
-                                          max_depth=args.max_depth)
+                                          max_depth=args.max_depth, execution_timeout=args.execution_timeout)
 
                 try:
                     with open(args.graph, "w") as f:
@@ -248,6 +254,7 @@ def main():
 
     except CriticalError as ce:
         exit_with_error(args.outform, str(ce))
+
 
 if __name__ == "__main__":
     main()

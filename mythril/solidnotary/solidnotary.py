@@ -1,27 +1,27 @@
-import logging
+
 from ethereum import utils
-from mythril.solidnotary.transactiontrace import TransactionTrace
-from mythril.solidnotary.z3utility import are_z3_satisfiable
 from mythril.analysis.symbolic import SymExecWrapper
 from mythril.support.loader import DynLoader
-from mythril.ether.soliditycontract import SolidityContract, SourceCodeInfo
-from mythril.disassembler.disassembly import Disassembly
-from mythril.solidnotary.calldata import get_minimal_constructor_param_encoding_len, abi_json_to_abi, get_calldata_name_map
-from mythril.solidnotary.coderewriter import write_code, get_code, \
-    replace_comments_with_whitespace, apply_rewriting
+from mythril.ether.soliditycontract import SolidityContract
+import mythril.laser.ethereum.util as helper
+from mythril.laser.ethereum.state import MachineState, GlobalState, Account, Environment, CalldataType
+from mythril.laser.ethereum.transaction import ContractCreationTransaction
+
+
+from .transactiontrace import TransactionTrace
+from .z3utility import are_z3_satisfiable
+from .calldata import get_minimal_constructor_param_encoding_len, abi_json_to_abi, get_calldata_name_map
+from .coderewriter import write_code, get_code, replace_comments_with_whitespace, apply_rewriting
+
 from .codeparser import find_matching_closed_bracket, newlines, get_newlinetype
 from .stateprocessing import AnnotationProcessor
-import mythril.laser.ethereum.util as helper
-from mythril.solidnotary.annotation import annotation_kw, init_annotation, increase_rewritten_pos, comment_out_annotations, expand_rew
-from z3 import BitVec,eq, Extract, BitVecVal, simplify
+from .annotation import annotation_kw, init_annotation, increase_rewritten_pos, comment_out_annotations, expand_rew
+from z3 import BitVec,eq
 from os.path import exists, isdir, dirname, isfile, join
 from os import makedirs, chdir, listdir, getcwd
 from re import finditer, escape
-from mythril.laser.ethereum.svm import GlobalState, Account, Environment, CalldataType
-from mythril.laser.ethereum.state import MachineState
 from shutil import rmtree, copy
-from re import findall, sub, DOTALL
-from copy import deepcopy
+from re import findall, DOTALL
 from functools import reduce
 
 project_name = "solidnotary"
@@ -103,7 +103,7 @@ def replace_index(text, toReplace, replacement, index):
 
 def get_sourcecode_and_mapping(address, instr_list, mappings):
     index = helper.get_instruction_index(instr_list, address)
-    if len(mappings) > index:
+    if index is not None and len(mappings) > index:
         return mappings[index]
     else:
         return None
@@ -175,8 +175,9 @@ def get_function_by_hash(contract, hash):
         if function.hash == hash:
             return function
 
-def getfunction_by_inthash(contract, value):
+def get_function_by_inthash(contract, value):
     return get_function_by_hash(contract, value.hash())
+
 
 """
     Parses the ast to find all positions where a contract might terminate with a transactions execution.
@@ -398,17 +399,14 @@ class SolidNotary:
             write_code(sol_file.filename, origin_file_code)
 
     def get_traces_and_build_violations(self, contract):
-
-        # Modified contract to symbolically execute the constructor
-        contr_to_const = deepcopy(contract)
-        contr_to_const.disassembly = contract.creation_disassembly
-        contr_to_const.code = contr_to_const.creation_code
         dynloader = DynLoader(self.eth) if self.dynld else None
-        glbstate = get_constr_glbstate(contr_to_const, self.address)
 
         # Building ignore lists for transactions and constructor executions
         create_ignore_list = []
         trans_ignore_list = []
+
+        # ignore_list = []
+
         for annotation in self.annotation_map[contract.name]:
             create_ignore_list.extend(annotation.get_creation_ignore_list())
             trans_ignore_list.extend(annotation.get_trans_ignore_list())
@@ -436,34 +434,34 @@ class SolidNotary:
         #print()
 
         # Used to run annotations violation build in traces construction in parallel
-        create_annotationsProcessor = AnnotationProcessor(contr_to_const.disassembly.instruction_list, create_ignore_list)
-        trans_annotationsProcessor = AnnotationProcessor(contract.disassembly.instruction_list, trans_ignore_list)
+        annotationsProcessor = AnnotationProcessor(contract.creation_disassembly.instruction_list,
+                                                   contract.disassembly.instruction_list, create_ignore_list, trans_ignore_list)
 
         # Symbolic execution of construction and transactions
-        print("Constructor")
-        sym_creation = SymExecWrapper(contr_to_const, self.address, laser_strategy, dynloader, self.max_depth,
-                                         glbstate=glbstate, prepostprocessor=create_annotationsProcessor)
-        print("Transactions")
+        print("Constructor and Transaction")
+
         sym_transactions = SymExecWrapper(contract, self.address, laser_strategy, dynloader, max_depth=self.max_depth,
-                                          prepostprocessor=trans_annotationsProcessor)
-        print("Constructor violations: " + str(len(reduce(lambda x, y: x + y, create_annotationsProcessor.violations, []))))
-        print("Transaction violations: " + str(len(reduce(lambda x, y: x + y, trans_annotationsProcessor.violations, []))))
+                                          prepostprocessor=annotationsProcessor) # Todo Mix the annotation Processors or mix ignore listst
+        print("Construction Violations: " + str(len(reduce(lambda x, y: x + y, annotationsProcessor.create_violations, []))))
+        print("Transaction Violations: " + str(len(reduce(lambda x, y: x + y, annotationsProcessor.trans_violations, []))))
 
         # Add found violations to the annotations they violated
+        # Todo Extract violations from only one symbolic execution
         for ign_idx in range(len(trans_ignore_list)):
             annotation = trans_ignore_list[ign_idx][4]
             mapping = get_sourcecode_and_mapping(trans_ignore_list[ign_idx][2]['address'], contract.disassembly.instruction_list, contract.mappings)
-            annotation.set_violations(trans_annotationsProcessor.violations[ign_idx], mapping, contract)
+            annotation.set_violations(annotationsProcessor.trans_violations[ign_idx], mapping, contract)
 
         for ign_idx in range(len(create_ignore_list)):
             annotation = create_ignore_list[ign_idx][4]
             mapping = get_sourcecode_and_mapping(create_ignore_list[ign_idx][2]['address'], contract.creation_disassembly.instruction_list, contract.creation_mappings)
-            annotation.set_violations(create_annotationsProcessor.violations[ign_idx], mapping, contract)
+            annotation.set_violations(annotationsProcessor.create_violations[ign_idx], mapping, contract)
 
 
         # Build traces from the regular annotation ignoring global states
-        create_traces = get_construction_traces(sym_creation)
-        trans_traces = get_transaction_traces(sym_transactions, contract)
+        # create_traces = get_construction_traces(sym_creation)
+        # Todo change traces extraction in a way to use mappings to differentiate between construction and transaction
+        create_traces, trans_traces = get_traces(sym_transactions, contract)
 
         return create_traces, trans_traces
 
@@ -502,17 +500,19 @@ class SolidNotary:
         # Todo Find how they are storing results
         pass
 
-def is_storage_primitive(storage):
+def is_storage_primitive(storage): # Todo If concrete storage gives the value 0 to all unknown lookup values, trace combination has to consider that for the constructor
     if storage:
-        for index, content in storage.items():
-            if not eq(content, BitVec("storage_" + str(index), 256)):
+        for index, content in storage._storage.items():
+            if not eq(content, BitVec("storage_" + str(index), 256)): # Todo See and adapt storage indexing
                 return False
     return True
 
-def get_transaction_traces(statespace, contract):
-    print("get_transaction_traces")
-    num_elimi_traces= 0
-    traces = []
+def get_traces(statespace, contract):
+    print("get_traces")
+    elim_t_t = 0
+    elim_c_t = 0
+    trans_traces = []
+    constr_traces = []
     state_count = 0
     node_count = 0
 
@@ -526,15 +526,34 @@ def get_transaction_traces(statespace, contract):
                 storage = state.environment.active_account.storage
                 if storage and not is_storage_primitive(storage) and are_z3_satisfiable(state.mstate.constraints):
 
-                    trace = TransactionTrace(state.environment.active_account.storage, state.mstate.constraints, contract)
+                    if isinstance(state.current_transaction, ContractCreationTransaction ):
+                        istr_list = contract.creation_disassembly.instruction_list
+                        mappings = contract.creation_mappings
+                    else:
+                        istr_list = contract.disassembly.instruction_list
+                        mappings = contract.mappings
 
-                    traces.append(trace)
+                    mapping = get_sourcecode_and_mapping(instruction['address'], istr_list, mappings)
+
+                    if mapping:
+
+                        trace = TransactionTrace(state.environment.active_account.storage, state.mstate.constraints, contract)
+                        if isinstance(state.current_transaction, ContractCreationTransaction):
+                            constr_traces.append(trace)
+                        else:
+                            trans_traces.append(trace)
+                    else:
+                        print("Skipped mapping")
                 else:
-                    num_elimi_traces += 1
-    print("Transaction traces: " + str(len(traces)) + " eliminated: " + str(num_elimi_traces))
+                    if isinstance(state, ContractCreationTransaction):
+                        elim_c_t += 1
+                    else:
+                        elim_t_t += 1
+    print("Construction traces: " + str(len(constr_traces)) + " eliminated: " + str(elim_c_t))
+    print("Transaction traces: " + str(len(trans_traces)) + " eliminated: " + str(elim_t_t))
     print("states: " + str(state_count))
     print("nodes: " + str(node_count))
-    return traces
+    return constr_traces, trans_traces
 
 def get_construction_traces(statespace):
     print("get_constructor_traces")

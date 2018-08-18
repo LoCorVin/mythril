@@ -1,7 +1,7 @@
 import json
 from mythril.ether.soliditycontract import SolidityContract
 
-from mythril.laser.ethereum.state import GlobalState, MachineState
+from mythril.laser.ethereum.state import GlobalState, MachineState, Account
 from mythril.laser.ethereum import svm
 from tests import *
 
@@ -47,7 +47,7 @@ IDENTITY_TEST[3] = (83269476937987, False)
 
 def _all_info(laser):
     accounts = {}
-    for address, _account in laser.accounts.items():
+    for address, _account in laser.world_state.accounts.items():
         account = _account.as_dict
         account["code"] = account["code"].instruction_list
         account['balance'] = str(account['balance'])
@@ -102,7 +102,7 @@ def _test_natives(laser_info, test_list, test_name):
 class NativeTests(BaseTestCase):
     def runTest(self):
         disassembly = SolidityContract('./tests/native_tests.sol').disassembly
-        account = svm.Account("0x0000000000000000000000000000000000000000", disassembly)
+        account = Account("0x0000000000000000000000000000000000000000", disassembly)
         accounts = {account.address: account}
 
         laser = svm.LaserEVM(accounts, max_depth = 100)

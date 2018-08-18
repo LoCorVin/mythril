@@ -3,6 +3,7 @@ from mythril.ether.ethcontract import ETHContract
 from mythril.ether.util import *
 from mythril.exceptions import NoContractFoundError
 
+
 class SourceMapping:
 
     def __init__(self, solidity_file_idx, offset, length, lineno):
@@ -41,7 +42,7 @@ def build_src_mappings(srcmapping, solidity_files):
         if len(mapping) > 2 and len(mapping[2]) > 0:
             idx = int(mapping[2])
 
-        lineno = solidity_files[idx].data[0:offset].count('\n') + 1
+        lineno = solidity_files[idx].data.encode('utf-8')[0:offset].count('\n'.encode('utf-8')) + 1
 
         mappings.append(SourceMapping(idx, offset, length, lineno))
     return mappings
@@ -77,7 +78,7 @@ class SolidityContract(ETHContract):
         # If a contract name has been specified, find the bytecode of that specific contract
 
         if name:
-            for key, contract in data['contracts'].items():
+            for key, contract in sorted(data['contracts'].items()):
                 filename, _name = key.split(":")
 
                 if filename == input_file and name == _name and len(contract['bin-runtime']):
@@ -94,7 +95,7 @@ class SolidityContract(ETHContract):
         # If no contract name is specified, get the last bytecode entry for the input file
 
         else:
-            for key, contract in data['contracts'].items():
+            for key, contract in sorted(data['contracts'].items()):
                 filename, name = key.split(":")
 
                 if filename == input_file and len(contract['bin-runtime']):
@@ -131,7 +132,7 @@ class SolidityContract(ETHContract):
         offset = self.mappings[index].offset
         length = self.mappings[index].length
 
-        code = solidity_file.data[offset:offset + length]
+        code = solidity_file.data.encode('utf-8')[offset:offset + length].decode('utf-8')
         lineno = self.mappings[index].lineno
 
         return SourceCodeInfo(filename, lineno, code)

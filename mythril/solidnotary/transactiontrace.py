@@ -42,7 +42,7 @@ class TransactionTrace:
 
 
         # Or hook transformation in here
-        self.storage = {s_name: Slot(s_name, z3_vars) for (s_name, z3_vars) in self.storage.items()}
+        self.storage = {s_name: Slot(s_name, z3_vars) for (s_name, z3_vars) in self.storage._storage.items()}
         self.constraints = [Constraint(constraint) for constraint in self.constraints]
 
         self.tran_constraints = deepcopy(self.constraints)

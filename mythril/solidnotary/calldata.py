@@ -247,9 +247,10 @@ def map_symbolic_vars_to_names(sym_var, contract, calldata_mapping, is_construct
         end = find_matching_closed_bracket(content, possible_offset.end() - 1)
         if not content[:start].trim().endswith("*") and not content[:end].trim().startswith("*"):
             offset = content[start:(end + 1)]
+            return offset # Other thing to do here
         possible_offset = next(found_calldata, None)
 
-    return
+    return None
 
 
 

@@ -1,10 +1,23 @@
 from mythril.laser.ethereum.strategy.basic import DepthFirstSearchStrategy
 from mythril.laser.ethereum.svm import SVMError
+from mythril.laser.ethereum.transaction import ContractCreationTransaction
 from copy import deepcopy
 from enum import Enum
 from z3 import simplify
 from .z3utility import are_z3_satisfiable
 
+def instr_eq(instr1, instr2):
+    if instr1['address'] == instr2['address'] and instr1['opcode'] == instr2['opcode'] and ('argument' in instr1) == ('argument' in instr2) and ('argument' not in instr1 or instr1['argument'] == instr2['argument']):
+        return True
+    return False
+
+def instr_index(instruction_list, instruction):
+    index = 0
+    for i in instruction_list:
+        if instr_eq(i,instruction):
+            return index
+        index += 1
+    return None
 
 # Instruction ignore type
 class IType(Enum):
@@ -42,12 +55,19 @@ class AnnotationProcessor(PrePostProcessor):
     # mythril analysis modules on the modified contract might give different results due to the processing of nodes and not states
     # actual but previous insturction that might me on the ignore list.
 
-    def __init__(self, instructions, ignore_list):
-        self.instructions = instructions
-        self.ignore_list = ignore_list
-        self.violations = []
-        for ignr_tpl in self.ignore_list:
-            self.violations.append([])
+    def __init__(self, create_instructions, trans_instructions, create_ignore_list, trans_ignore_list):
+
+        self.create_instructions = create_instructions
+        self.trans_instructions = trans_instructions
+
+        self.create_ignore_list = create_ignore_list
+        self.trans_ignore_list = trans_ignore_list
+        self.trans_violations = []
+        for ignr_tpl in self.trans_ignore_list:
+            self.trans_violations.append([])
+        self.create_violations = []
+        for ignr_tpl in self.create_ignore_list:
+            self.create_violations.append([])
         self.state_ctr = 0
         self.restored_ids = []
 
@@ -63,25 +83,37 @@ class AnnotationProcessor(PrePostProcessor):
                 ret_states.append(state)
         return ret_states
 
+    def get_context_ignore_list(self, global_state):
+        if isinstance(global_state.current_transaction, ContractCreationTransaction):
+            return self.create_ignore_list
+        else:
+            return self.trans_ignore_list
+
+    def get_context_instructions(self, global_state):
+        if isinstance(global_state.current_transaction, ContractCreationTransaction):
+            return self.create_instructions
+        else:
+            return self.trans_instructions
+
     def is_this_or_previouse_ignore_type(self, global_state, itype=IType.ENTRY):
         instructions = global_state.environment.code.instruction_list
         instr = instructions[global_state.mstate.pc]
 
-        ignore_tuples = [ign_tuple for ign_tuple in self.ignore_list if ign_tuple[itype.value] == instr]
+        ignore_tuples = [ign_tuple for ign_tuple in self.get_context_ignore_list(global_state) if instr_eq(ign_tuple[itype.value], instr)]
         if not ignore_tuples and instructions[global_state.mstate.pc - 1]['opcode'] == 'JUMPDEST':
             # print("Handle pre jumpdest")
             jumpdest_istr = instructions[global_state.mstate.pc - 1]
-            ignore_tuples = [ign_tuple for ign_tuple in self.ignore_list if ign_tuple[itype.value] == jumpdest_istr]
+            ignore_tuples = [ign_tuple for ign_tuple in self.get_context_ignore_list(global_state) if instr_eq(ign_tuple[itype.value], jumpdest_istr)]
         return ignore_tuples is not None and len(ignore_tuples) > 0
 
     def get_ignore_tuple(self, global_state, itype=IType.ENTRY):
         instructions = global_state.environment.code.instruction_list
         instr = instructions[global_state.mstate.pc]
 
-        ignore_tuples = [ign_tuple for ign_tuple in self.ignore_list if ign_tuple[itype.value] == instr]
+        ignore_tuples = [ign_tuple for ign_tuple in self.get_context_ignore_list(global_state) if instr_eq(ign_tuple[itype.value], instr)]
         if not ignore_tuples and instructions[global_state.mstate.pc - 1]['opcode'] == 'JUMPDEST':
             jumpdest_istr = instructions[global_state.mstate.pc - 1]
-            ignore_tuples = [ign_tuple for ign_tuple in self.ignore_list if ign_tuple[itype.value] == jumpdest_istr]
+            ignore_tuples = [ign_tuple for ign_tuple in self.get_context_ignore_list(global_state) if instr_eq(ign_tuple[itype.value], jumpdest_istr)]
         if not ignore_tuples:
             return None
         return ignore_tuples[0]
@@ -89,17 +121,17 @@ class AnnotationProcessor(PrePostProcessor):
     def preprocess(self, global_state):
         instructions = global_state.environment.code.instruction_list
         instr = instructions[global_state.mstate.pc]
-        if instr['address'] == 71:
-            print()
 
         if hasattr(global_state, "duplicate"):
             print("Pick up duplicate")
-        print(instr)
+
+
+        print(self.get_context_instructions(global_state)[instr_index(self.get_context_instructions(global_state), instr)])
         if self.is_this_or_previouse_ignore_type(global_state, IType.ENTRY):
             if hasattr(global_state, 'saved_state'): # Skip
                 print("Skip")
                 ign_exit_istr = self.get_ignore_tuple(global_state, IType.ENTRY)[IType.EXIT.value]
-                istr_idx = instructions.index(ign_exit_istr)
+                istr_idx = instr_index(instructions, ign_exit_istr)
                 global_state.mstate.pc = istr_idx + 1
             else: # Save
                 # Todo Here we do now only MARK the state to be ignored
@@ -117,9 +149,18 @@ class AnnotationProcessor(PrePostProcessor):
             if are_z3_satisfiable(global_state.mstate.constraints):
                 violating_state = deepcopy(global_state)
                 del violating_state.saved_state # Todo Why do we delete this here? I think we need the mark to ignore it in graph building
-                self.violations[self.ignore_list.index(self.get_ignore_tuple(global_state, IType.VIOLATION))].append(violating_state)
+
+                self.add_violation(violating_state)
 
         return global_state
+
+    def add_violation(self, violating_state):
+        index = self.get_context_ignore_list(violating_state).index(self.get_ignore_tuple(violating_state, IType.VIOLATION))
+        if isinstance(violating_state.current_transaction, ContractCreationTransaction):
+            self.create_violations[index].append(violating_state)
+        else:
+            self.trans_violations[index].append(violating_state)
+
 
     def postprocess(self, global_state, new_global_states):
         returnable_new_states = []
@@ -145,27 +186,33 @@ class AnnotationProcessor(PrePostProcessor):
 
         for state_idx in range(len(new_global_states)):
             new_state = new_global_states[state_idx]
-            instr = self.instructions[global_state.mstate.pc]
+            instr = global_state.environment.code.instruction_list[global_state.mstate.pc]
+            new_instr = self.get_context_instructions(new_state)[new_state.mstate.pc]
 
+            if global_state.environment.code.instruction_list[new_state.mstate.pc]['address'] == 36:
+                print()
             if self.is_this_or_previouse_ignore_type(new_state, IType.ENTRY):
                 print("Duplicate new")
                 skip_state = new_state # Not using deepcopy here anymore, leeds to missing states in node in statespace
                 new_global_states[state_idx] = None
 
                 while self.is_this_or_previouse_ignore_type(skip_state, IType.ENTRY):
+                    print(str(self.get_context_instructions(skip_state)[skip_state.mstate.pc]))
 
                     # Leave a new state to start the execution of the part to be ignored by the rest
                     ign_state = deepcopy(skip_state)
                     ign_state.ignore = "ignore"
                     returnable_new_states.append(ign_state)
-                    print("Leave ignore state to process")
+                    print("Leave ignore state to process                " + str(self.get_context_instructions(ign_state)[instr_index(self.get_context_instructions(ign_state), instr)]))
 
                     # set skip state to the next instruction that may again be a regular one
                     ign_exit_istr = self.get_ignore_tuple(skip_state, IType.ENTRY)[IType.EXIT.value]
-                    istr_idx = self.instructions.index(ign_exit_istr)
+                    istr_idx = instr_index(self.get_context_instructions(global_state), ign_exit_istr)
                     skip_state.mstate.pc = istr_idx + 1
                 # After skip state finally reached an instruction that is not another entry it is marked as dublicate
                 skip_state.duplicate = "duplicate"
+
+                print("Final skip state" + str(self.get_context_instructions(skip_state)[skip_state.mstate.pc]))
                 returnable_new_states.append(skip_state)
 
 

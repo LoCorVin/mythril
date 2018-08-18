@@ -13,6 +13,7 @@ from mythril.laser.ethereum import util
 from mythril.laser.ethereum.call import get_call_parameters
 from mythril.laser.ethereum.state import GlobalState, MachineState, Environment, CalldataType
 import mythril.laser.ethereum.natives as natives
+from mythril.laser.ethereum.transaction import MessageCallTransaction, TransactionEndSignal, TransactionStartSignal
 
 TT256 = 2 ** 256
 TT256M1 = 2 ** 256 - 1
@@ -47,7 +48,7 @@ class Instruction:
         self.dynamic_loader = dynamic_loader
         self.op_code = op_code
 
-    def evaluate(self, global_state):
+    def evaluate(self, global_state, post=False):
         """ Performs the mutation for this instruction """
         # Generalize some ops
         logging.debug("Evaluating {}".format(self.op_code))
@@ -60,7 +61,8 @@ class Instruction:
             op = "swap"
         elif self.op_code.startswith("LOG"):
             op = "log"
-        instruction_mutator = getattr(self, op + '_', None)
+
+        instruction_mutator = getattr(self, op + '_', None) if not post else getattr(self, op + '_' + 'post', None)
 
         if instruction_mutator is None:
             raise NotImplementedError
@@ -445,13 +447,14 @@ class Instruction:
     def balance_(self, global_state):
         state = global_state.mstate
         address = state.stack.pop()
-        state.stack.append(BitVec("balance_at_" + str(address), 256))
+        state.stack.append(BitVec("balance_at[" + str(address) + "]", 256))
         return [global_state]
 
     @instruction
     def origin_(self, global_state):
         state = global_state.mstate
         environment = global_state.environment
+        state.stack.append(environment.origin)
         return [global_state]
 
     @instruction
@@ -514,9 +517,44 @@ class Instruction:
 
     @instruction
     def codecopy_(self, global_state):
-        # FIXME: not implemented
-        state = global_state.mstate
-        start, s1, size = state.stack.pop(), state.stack.pop(), state.stack.pop()
+        memory_offset, code_offset, size = global_state.mstate.stack.pop(), global_state.mstate.stack.pop(), global_state.mstate.stack.pop()
+
+        try:
+            concrete_memory_offset = helper.get_concrete_int(memory_offset)
+        except AttributeError:
+            logging.debug("Unsupported symbolic memory offset in CODECOPY")
+            return [global_state]
+
+        try:
+            concrete_size = helper.get_concrete_int(size)
+            global_state.mstate.mem_extend(concrete_memory_offset, concrete_size)
+        except:
+            # except both attribute error and Exception
+            global_state.mstate.mem_extend(concrete_memory_offset, 1)
+            global_state.mstate.memory[concrete_memory_offset] = \
+                BitVec("code({})".format(global_state.environment.active_account.contract_name), 256)
+            return [global_state]
+
+        try:
+            concrete_code_offset = helper.get_concrete_int(code_offset)
+        except AttributeError:
+            logging.debug("Unsupported symbolic code offset in CODECOPY")
+            global_state.mstate.mem_extend(concrete_memory_offset, concrete_size)
+            for i in range(concrete_size):
+                global_state.mstate.memory[concrete_memory_offset + i] = \
+                    BitVec("code({})".format(global_state.environment.active_account.contract_name), 256)
+            return [global_state]
+
+        bytecode = global_state.environment.code.bytecode
+
+        for i in range(concrete_size):
+            if 2 * (concrete_code_offset + i + 1) <= len(bytecode):
+                global_state.mstate.memory[concrete_memory_offset + i] =\
+                    int(bytecode[2*(concrete_code_offset + i): 2*(concrete_code_offset + i + 1)], 16)
+            else:
+                global_state.mstate.memory[concrete_memory_offset + i] = \
+                    BitVec("code({})".format(global_state.environment.active_account.contract_name), 256)
+
         return [global_state]
 
     @instruction
@@ -686,7 +724,7 @@ class Instruction:
         try:
             data = global_state.environment.active_account.storage[index]
         except KeyError:
-            data = BitVec("storage_" + str(index), 256)
+            data = BitVec("storage[" + str(index) + "]", 256)
             global_state.environment.active_account.storage[index] = data
 
         state.stack.append(data)
@@ -705,13 +743,9 @@ class Instruction:
             index = str(index)
 
         try:
-            # Create a fresh copy of the account object before modifying storage
-
-            for k in global_state.accounts:
-                if global_state.accounts[k] == global_state.environment.active_account:
-                    global_state.accounts[k] = deepcopy(global_state.accounts[k])
-                    global_state.environment.active_account = global_state.accounts[k]
-                    break
+            global_state.environment.active_account = deepcopy(global_state.environment.active_account)
+            global_state.accounts[
+                global_state.environment.active_account.address] = global_state.environment.active_account
 
             global_state.environment.active_account.storage[index] = value
         except KeyError:
@@ -757,42 +791,47 @@ class Instruction:
 
         try:
             jump_addr = util.get_concrete_int(op0)
-        # FIXME: to broad exception handler
+            # FIXME: to broad exception handler
         except:
             logging.debug("Skipping JUMPI to invalid destination.")
             return [global_state]
 
-        index = util.get_instruction_index(disassembly.instruction_list, jump_addr)
+        # False case
+        negated = simplify(Not(condition)) if type(condition) == BoolRef else condition == 0
 
-        if not index:
-            logging.debug("Invalid jump destination: " + str(jump_addr))
-            return [global_state]
-        instr = disassembly.instruction_list[index]
+        if (type(negated) == bool and negated) or (type(negated) == BoolRef and not is_false(negated)):
+            new_state = copy(global_state)
+            new_state.mstate.depth += 1
+            new_state.mstate.constraints.append(negated)
+            states.append(new_state)
+        else:
+            print(condition)
+            print("Prunned unreachable false state")
+            logging.debug("Pruned unreachable states.")
 
         # True case
-        condi = condition if type(condition) == BoolRef else condition != 0
+
+        # Get jump destination
+        index = util.get_instruction_index(disassembly.instruction_list, jump_addr)
+        if not index:
+            logging.debug("Invalid jump destination: " + str(jump_addr))
+            return states
+
+        instr = disassembly.instruction_list[index]
+
+        condi = simplify(condition) if type(condition) == BoolRef else condition != 0
         if instr['opcode'] == "JUMPDEST":
-            if (type(condi) == bool and condi) or (type(condi) == BoolRef and not is_false(simplify(condi))):
-                new_state = deepcopy(global_state)
+            if (type(condi) == bool and condi) or (type(condi) == BoolRef and not is_false(condi)):
+                new_state = copy(global_state)
                 new_state.mstate.pc = index
                 new_state.mstate.depth += 1
                 new_state.mstate.constraints.append(condi)
 
                 states.append(new_state)
             else:
+                print(condition)
+                print("Prunned unreachable true state")
                 logging.debug("Pruned unreachable states.")
-
-        # False case
-        negated = Not(condition) if type(condition) == BoolRef else condition == 0
-        sat = not is_false(simplify(negated)) if type(condi) == BoolRef else not negated
-
-        if sat:
-            new_state = copy(global_state)
-            new_state.mstate.depth += 1
-            new_state.mstate.constraints.append(negated)
-            states.append(new_state)
-        else:
-            logging.debug("Pruned unreachable states.")
 
         return states
 
@@ -832,24 +871,14 @@ class Instruction:
 
     @instruction
     def return_(self, global_state):
-        # TODO: memory
         state = global_state.mstate
         offset, length = state.stack.pop(), state.stack.pop()
+        return_data = [BitVec("return_data", 256)]
         try:
-            _ = state.memory[util.get_concrete_int(offset):util.get_concrete_int(offset + length)]
+            return_data = state.memory[util.get_concrete_int(offset):util.get_concrete_int(offset + length)]
         except AttributeError:
             logging.debug("Return with symbolic length or offset. Not supported")
-
-        return_value = BitVec("retval_" + global_state.environment.active_function_name, 256)
-
-        if not global_state.call_stack:
-            return []
-
-        new_global_state = deepcopy(global_state.call_stack.pop())
-        new_global_state.node = global_state.node
-        # TODO: copy memory
-
-        return [new_global_state]
+        global_state.current_transaction.end(global_state, return_data)
 
     @instruction
     def suicide_(self, global_state):
@@ -869,11 +898,7 @@ class Instruction:
 
     @instruction
     def stop_(self, global_state):
-        if len(global_state.call_stack) is 0:
-            return []
-        new_global_state = deepcopy(global_state.call_stack.pop())
-        new_global_state.node = global_state.node
-        return [new_global_state]
+        global_state.current_transaction.end(global_state)
 
     @instruction
     def call_(self, global_state):
@@ -881,7 +906,8 @@ class Instruction:
         environment = global_state.environment
 
         try:
-            callee_address, callee_account, call_data, value, call_data_type, gas, memory_out_offset, memory_out_size = get_call_parameters(global_state, self.dynamic_loader, True)
+            callee_address, callee_account, call_data, value, call_data_type, gas, memory_out_offset, memory_out_size = get_call_parameters(
+                global_state, self.dynamic_loader, True)
         except ValueError as e:
             logging.info(
                 "Could not determine required parameters for call, putting fresh symbol on the stack. \n{}".format(e)
@@ -911,8 +937,8 @@ class Instruction:
             except natives.NativeContractException:
                 contract_list = ['ecerecover', 'sha256', 'ripemd160', 'identity']
                 for i in range(mem_out_sz):
-                    global_state.mstate.memory[mem_out_start+i] = BitVec(contract_list[call_address_int - 1]+
-                                                                         "(" + str(call_data) + ")", 256)
+                    global_state.mstate.memory[mem_out_start + i] = BitVec(contract_list[call_address_int - 1] +
+                                                                           "(" + str(call_data) + ")", 256)
 
                 return [global_state]
 
@@ -922,19 +948,56 @@ class Instruction:
             # TODO: maybe use BitVec here constrained to 1
             return [global_state]
 
-        callee_environment = Environment(callee_account,
-                                         BitVecVal(int(environment.active_account.address, 16), 256),
-                                         call_data,
-                                         environment.gasprice,
-                                         value,
-                                         environment.origin,
-                                         calldata_type=call_data_type)
-        new_global_state = GlobalState(global_state.accounts, callee_environment, global_state.node, MachineState(gas))
-        new_global_state.call_stack.append(global_state)
-        new_global_state.mstate.pc = -1
-        new_global_state.mstate.depth = global_state.mstate.depth + 1
-        new_global_state.mstate.constraints = copy(global_state.mstate.constraints)
-        return [new_global_state]
+        transaction = MessageCallTransaction(global_state.world_state,
+                                             callee_account,
+                                             BitVecVal(int(environment.active_account.address, 16), 256),
+                                             call_data,
+                                             environment.gasprice,
+                                             value,
+                                             environment.origin,
+                                             call_data_type)
+        raise TransactionStartSignal(transaction, self.op_code)
+
+    @instruction
+    def call_post(self, global_state):
+        instr = global_state.get_current_instruction()
+
+        try:
+            _, _, _, _, _, _, memory_out_offset, memory_out_size = get_call_parameters(
+                global_state, self.dynamic_loader, True)
+        except ValueError as e:
+            logging.info(
+                "Could not determine required parameters for call, putting fresh symbol on the stack. \n{}".format(e)
+            )
+            global_state.mstate.stack.append(BitVec("retval_" + str(instr['address']), 256))
+            return [global_state]
+
+        if global_state.last_return_data is None:
+            # Put return value on stack
+            return_value = BitVec("retval_" + str(instr['address']), 256)
+            global_state.mstate.stack.append(return_value)
+            global_state.mstate.constraints.append(return_value == 0)
+
+            return [global_state]
+
+        try:
+            memory_out_offset = util.get_concrete_int(memory_out_offset) if isinstance(memory_out_offset, ExprRef) else memory_out_offset
+            memory_out_size = util.get_concrete_int(memory_out_size) if isinstance(memory_out_size, ExprRef) else memory_out_size
+        except AttributeError:
+            global_state.mstate.stack.append(BitVec("retval_" + str(instr['address']), 256))
+            return [global_state]
+
+        # Copy memory
+        global_state.mstate.mem_extend(memory_out_offset, min(memory_out_size, len(global_state.last_return_data)))
+        for i in range(min(memory_out_size, len(global_state.last_return_data))):
+            global_state.mstate.memory[i + memory_out_offset] = global_state.last_return_data[i]
+
+        # Put return value on stack
+        return_value = BitVec("retval_" + str(instr['address']), 256)
+        global_state.mstate.stack.append(return_value)
+        global_state.mstate.constraints.append(return_value == 1)
+
+        return [global_state]
 
     @instruction
     def callcode_(self, global_state):
@@ -942,7 +1005,8 @@ class Instruction:
         environment = global_state.environment
 
         try:
-            callee_address, callee_account, call_data, value, call_data_type, gas, _, _ = get_call_parameters(global_state, self.dynamic_loader, True)
+            callee_address, callee_account, call_data, value, call_data_type, gas, _, _ = get_call_parameters(
+                global_state, self.dynamic_loader, True)
         except ValueError as e:
             logging.info(
                 "Could not determine required parameters for call, putting fresh symbol on the stack. \n{}".format(e)
@@ -950,21 +1014,59 @@ class Instruction:
             global_state.mstate.stack.append(BitVec("retval_" + str(instr['address']), 256))
             return [global_state]
 
-        global_state.mstate.stack.append(BitVec("retval_" + str(instr['address']), 256))
+        transaction = MessageCallTransaction(global_state.world_state,
+                                             environment.active_account,
+                                             environment.address,
+                                             call_data,
+                                             environment.gasprice,
+                                             value,
+                                             environment.origin,
+                                             call_data_type,
+                                             callee_account.code
+                                             )
+        raise TransactionStartSignal(transaction, self.op_code)
 
-        environment = deepcopy(environment)
+    @instruction
+    def callcode_post(self, global_state):
+        instr = global_state.get_current_instruction()
 
-        environment.callvalue = value
-        environment.caller = environment.address
-        environment.calldata = call_data
+        try:
+            _, _, _, _, _, _, memory_out_offset, memory_out_size = get_call_parameters(
+                global_state, self.dynamic_loader, True)
+        except ValueError as e:
+            logging.info(
+                "Could not determine required parameters for call, putting fresh symbol on the stack. \n{}".format(e)
+            )
+            global_state.mstate.stack.append(BitVec("retval_" + str(instr['address']), 256))
+            return [global_state]
 
-        new_global_state = GlobalState(global_state.accounts, environment, global_state.node, MachineState(gas))
-        new_global_state.call_stack.append(global_state)
-        new_global_state.mstate.pc = -1
-        new_global_state.mstate.depth = global_state.mstate.depth + 1
-        new_global_state.mstate.constraints = copy(global_state.mstate.constraints)
+        if global_state.last_return_data is None:
+            # Put return value on stack
+            return_value = BitVec("retval_" + str(instr['address']), 256)
+            global_state.mstate.stack.append(return_value)
+            global_state.mstate.constraints.append(return_value == 0)
 
-        return [new_global_state]
+            return [global_state]
+
+        try:
+            memory_out_offset = util.get_concrete_int(memory_out_offset) if isinstance(memory_out_offset, ExprRef) else memory_out_offset
+            memory_out_size = util.get_concrete_int(memory_out_size) if isinstance(memory_out_size, ExprRef) else memory_out_size
+        except AttributeError:
+            global_state.mstate.stack.append(BitVec("retval_" + str(instr['address']), 256))
+            return [global_state]
+
+        # Copy memory
+        global_state.mstate.mem_extend(memory_out_offset, min(memory_out_size, len(global_state.last_return_data)))
+        for i in range(min(memory_out_size, len(global_state.last_return_data))):
+            global_state.mstate.memory[i + memory_out_offset] = global_state.last_return_data[i]
+
+        # Put return value on stack
+        return_value = BitVec("retval_" + str(instr['address']), 256)
+        global_state.mstate.stack.append(return_value)
+        global_state.mstate.constraints.append(return_value == 1)
+
+        return [global_state]
+
 
     @instruction
     def delegatecall_(self, global_state):
@@ -972,7 +1074,8 @@ class Instruction:
         environment = global_state.environment
 
         try:
-            callee_address, callee_account, call_data, _, call_data_type, gas, _, _ = get_call_parameters(global_state, self.dynamic_loader)
+            callee_address, callee_account, call_data, _, call_data_type, gas, _, _ = get_call_parameters(global_state,
+                                                                                                          self.dynamic_loader)
         except ValueError as e:
             logging.info(
                 "Could not determine required parameters for call, putting fresh symbol on the stack. \n{}".format(e)
@@ -980,21 +1083,62 @@ class Instruction:
             global_state.mstate.stack.append(BitVec("retval_" + str(instr['address']), 256))
             return [global_state]
 
-        global_state.mstate.stack.append(BitVec("retval_" + str(instr['address']), 256))
+        transaction = MessageCallTransaction(global_state.world_state,
+                                             environment.active_account,
+                                             environment.sender,
+                                             call_data,
+                                             environment.gasprice,
+                                             environment.callvalue,
+                                             environment.origin,
+                                             call_data_type,
+                                             callee_account.code
+                                             )
+        raise TransactionStartSignal(transaction, self.op_code)
 
-        environment = deepcopy(environment)
 
-        environment.code = callee_account.code
-        environment.calldata = call_data
+    @instruction
+    def delegatecall_post(self, global_state):
+        instr = global_state.get_current_instruction()
 
-        new_global_state = GlobalState(global_state.accounts, environment, global_state.node, MachineState(gas))
-        new_global_state.call_stack.append(global_state)
-        new_global_state.mstate.pc = -1
-        new_global_state.mstate.depth = global_state.mstate.depth + 1
-        new_global_state.mstate.constraints = copy(global_state.mstate.constraints)
+        try:
+            _, _, _, _, _, _, memory_out_offset, memory_out_size =\
+                get_call_parameters(global_state, self.dynamic_loader)
+        except ValueError as e:
+            logging.info(
+                "Could not determine required parameters for call, putting fresh symbol on the stack. \n{}".format(e)
+            )
+            global_state.mstate.stack.append(BitVec("retval_" + str(instr['address']), 256))
+            return [global_state]
 
-        return [new_global_state]
+        if global_state.last_return_data is None:
+            # Put return value on stack
+            return_value = BitVec("retval_" + str(instr['address']), 256)
+            global_state.mstate.stack.append(return_value)
+            global_state.mstate.constraints.append(return_value == 0)
 
+            return [global_state]
+
+        try:
+            memory_out_offset = util.get_concrete_int(memory_out_offset) if isinstance(memory_out_offset,
+                                                                                       ExprRef) else memory_out_offset
+            memory_out_size = util.get_concrete_int(memory_out_size) if isinstance(memory_out_size,
+                                                                                   ExprRef) else memory_out_size
+        except AttributeError:
+            global_state.mstate.stack.append(BitVec("retval_" + str(instr['address']), 256))
+            return [global_state]
+
+            # Copy memory
+        global_state.mstate.mem_extend(memory_out_offset,
+                                       min(memory_out_size, len(global_state.last_return_data)))
+        for i in range(min(memory_out_size, len(global_state.last_return_data))):
+            global_state.mstate.memory[i + memory_out_offset] = global_state.last_return_data[i]
+
+        # Put return value on stack
+        return_value = BitVec("retval_" + str(instr['address']), 256)
+        global_state.mstate.stack.append(return_value)
+        global_state.mstate.constraints.append(return_value == 1)
+
+        return [global_state]
 
     @instruction
     def staticcall_(self, global_state):

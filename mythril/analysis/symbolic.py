@@ -1,5 +1,7 @@
 from mythril import ether
 from mythril.laser.ethereum import svm
+from mythril.laser.ethereum.state import Account
+from mythril.ether.soliditycontract import SolidityContract
 import copy
 import logging
 from .ops import get_variable, SStore, Call, VarType
@@ -12,7 +14,7 @@ class SymExecWrapper:
     Wrapper class for the LASER Symbolic virtual machine. Symbolically executes the code and does a bit of pre-analysis for convenience.
     '''
 
-    def __init__(self, contract, address, strategy, dynloader=None, max_depth=22, execution_timeout=None, glbstate=None, prepostprocessor=None):
+    def __init__(self, contract, address, strategy, dynloader=None, max_depth=22, execution_timeout=None, prepostprocessor=None):
         s_strategy = None
         if strategy == 'dfs':
             s_strategy = DepthFirstSearchStrategy
@@ -21,15 +23,15 @@ class SymExecWrapper:
         else:
             raise ValueError("Invalid strategy argument supplied")
 
-        account = svm.Account(address, contract.disassembly, contract_name=contract.name)
+        account = Account(address, contract.disassembly, contract_name=contract.name)
 
         self.accounts = {address: account}
 
         self.laser = svm.LaserEVM(self.accounts, dynamic_loader=dynloader, max_depth=max_depth, execution_timeout=execution_timeout, strategy=s_strategy, prepostprocessor=prepostprocessor)
 
-        if not (glbstate is None):
-            # Adding the ability to specify a custom global state, e.g. machine configuration from outside
-            self.laser.sym_exec_glbstate(glbstate)
+
+        if isinstance(contract, SolidityContract):
+            self.laser.sym_exec(creation_code=contract.creation_code, contract_name=contract.name)
         else:
             self.laser.sym_exec(address)
 

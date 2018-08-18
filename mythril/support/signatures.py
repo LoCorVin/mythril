@@ -2,13 +2,14 @@
 # -*- coding: UTF-8 -*-
 """mythril.py: Function Signature Database
 """
-import re
 import os
 import json
 import time
-import pathlib
 import logging
-from ethereum import utils
+
+from subprocess import Popen, PIPE
+from mythril.exceptions import CompilerError
+
 
 # todo: tintinweb - make this a normal requirement? (deps: eth-abi and requests, both already required by mythril)
 try:
@@ -21,47 +22,34 @@ except ImportError:
     FourByteDirectoryOnlineLookupError = Exception
 
 
-class SimpleFileLock(object):
-    # todo: replace with something more reliable. this is a quick shot on concurrency and might not work in all cases
+try:
+    # Posix based file locking (Linux, Ubuntu, MacOS, etc.)
+    import fcntl
 
-    def __init__(self, path):
-        self.path = path
-        self.lockfile = pathlib.Path("%s.lck" % path)
-        self.locked = False
+    def lock_file(f, exclusive=False):
+        if f.mode == 'r' and exclusive:
+            raise Exception('Please use non exclusive mode for reading')
+        flag = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        fcntl.lockf(f, flag)
 
-    def aquire(self, timeout=5):
-        if self.locked:
-            raise Exception("SimpleFileLock: lock already aquired")
+    def unlock_file(f):
+        return
 
-        t_end = time.time()+timeout
-        while time.time() < t_end:
-            # try to aquire lock
-            try:
-                self.lockfile.touch(mode=0o0000, exist_ok=False)  # touch the lockfile
-                # lockfile does not exist. we have a lock now
-                self.locked = True
-                return
-            except FileExistsError as fee:
-                # check if lockfile date exceeds age and cleanup lock
-                if time.time() > self.lockfile.stat().st_mtime + 60 * 5:
-                    self.release(force=True)  # cleanup old lockfile > 5mins
+except ImportError:
+    # Windows file locking
+    # TODO: confirm the existence or non existence of shared locks in windows msvcrt and make changes based on that
+    import msvcrt
 
-                time.sleep(0.5)  # busywait is evil
-                continue
+    def file_size(f):
+        return os.path.getsize(os.path.realpath(f.name))
 
-        raise Exception("SimpleFileLock: timeout hit. failed to aquire lock: %s"% (time.time()-self.lockfile.stat().st_mtime))
+    def lock_file(f, exclusive=False):
+        if f.mode == 'r' and exclusive:
+            raise Exception('Please use non exclusive mode for reading')
+        msvcrt.locking(f.fileno(), msvcrt.LK_RLCK, file_size(f))
 
-    def release(self, force=False):
-        if not force and not self.locked:
-            raise Exception("SimpleFileLock: aquire lock first")
-
-        try:
-            self.lockfile.unlink()  # might throw if we force unlock and the file gets removed in the meantime. TOCTOU
-        except FileNotFoundError as fnfe:
-            logging.warning("SimpleFileLock: release(force=%s) on unavailable file. race? %r" % (force, fnfe))
-
-        self.locked = False
-
+    def unlock_file(f):
+        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, file_size(f))
 
 
 class SignatureDb(object):
@@ -73,7 +61,6 @@ class SignatureDb(object):
         """
         self.signatures = {}  # signatures in-mem cache
         self.signatures_file = None
-        self.signatures_file_lock = None
         self.enable_online_lookup = enable_online_lookup  # enable online funcsig resolving
         self.online_lookup_miss = set()  # temporarily track misses from onlinedb to avoid requesting the same non-existent sighash multiple times
         self.online_directory_unavailable_until = 0  # flag the online directory as unavailable for some time
@@ -94,18 +81,16 @@ class SignatureDb(object):
             path = os.path.join(mythril_dir, 'signatures.json')
 
         self.signatures_file = path  # store early to allow error handling to access the place we tried to load the file
-
         if not os.path.exists(path):
             logging.debug("Signatures: file not found: %s" % path)
             raise FileNotFoundError("Missing function signature file. Resolving of function names disabled.")
 
-        self.signatures_file_lock = self.signatures_file_lock or SimpleFileLock(self.signatures_file)  # lock file to prevent concurrency issues
-        self.signatures_file_lock.aquire()  # try to aquire it within the next 10s
-
-        with open(path, 'r') as f:
-            sigs = json.load(f)
-
-        self.signatures_file_lock.release()  # release lock
+        with open(path, "r") as f:
+            lock_file(f)
+            try:
+                sigs = json.load(f)
+            finally:
+                unlock_file(f)
 
         # normalize it to {sighash:list(signatures,...)}
         for sighash, funcsig in sigs.items():
@@ -126,21 +111,28 @@ class SignatureDb(object):
         :return: self
         """
         path = path or self.signatures_file
-        self.signatures_file_lock = self.signatures_file_lock or SimpleFileLock(path)  # lock file to prevent concurrency issues
-        self.signatures_file_lock.aquire()  # try to aquire it within the next 10s
-
         if sync and os.path.exists(path):
             # reload and save if file exists
-            with open(path, 'r') as f:
-                sigs = json.load(f)
+            with open(path, "r") as f:
+                lock_file(f)
+                try:
+                    sigs = json.load(f)
+                finally:
+                    unlock_file(f)
 
             sigs.update(self.signatures)  # reload file and merge cached sigs into what we load from file
             self.signatures = sigs
+        
+        if not os.path.exists(path):       # creates signatures.json file if it doesn't exist
+            open(path, "w").close()
 
-        with open(path, 'w') as f:
-            json.dump(self.signatures, f)
+        with open(path, "r+") as f:        # placing 'w+' here will result in race conditions
+            lock_file(f, exclusive=True)
+            try:
+                json.dump(self.signatures, f)
+            finally:
+                unlock_file(f)
 
-        self.signatures_file_lock.release()
         return self
 
     def get(self, sighash, timeout=2):
@@ -154,7 +146,6 @@ class SignatureDb(object):
         """
         if not sighash.startswith("0x"):
             sighash = "0x%s" % sighash  # normalize sighash format
-
         if self.enable_online_lookup and not self.signatures.get(sighash) and sighash not in self.online_lookup_miss and time.time() > self.online_directory_unavailable_until:
             # online lookup enabled, and signature not in cache, sighash was not a miss earlier, and online directory not down
             logging.debug("Signatures: performing online lookup for sighash %r" % sighash)
@@ -169,6 +160,8 @@ class SignatureDb(object):
             except FourByteDirectoryOnlineLookupError as fbdole:
                 self.online_directory_unavailable_until = time.time() + 2 * 60  # wait at least 2 mins to try again
                 logging.warning("online function signature lookup not available. will not try to lookup hash for the next 2 minutes. exception: %r" % fbdole)
+        if type(self.signatures[sighash]) != list:
+            return [self.signatures[sighash]]
         return self.signatures[sighash]  # raise keyerror
 
     def __getitem__(self, item):
@@ -179,13 +172,13 @@ class SignatureDb(object):
         """
         return self.get(sighash=item)
 
-    def import_from_solidity_source(self, code):
+    def import_from_solidity_source(self, file_path):
         """
         Import Function Signatures from solidity source files
-        :param code: solidity source code
+        :param file_path: solidity source code file path
         :return: self
         """
-        self.signatures.update(SignatureDb.parse_function_signatures_from_solidity_source(code))
+        self.signatures.update(SignatureDb.get_sigs_from_file(file_path))
         return self
 
     @staticmethod
@@ -208,37 +201,26 @@ class SignatureDb(object):
                                                                                        proxies=proxies))
 
     @staticmethod
-    def parse_function_signatures_from_solidity_source(code):
+    def get_sigs_from_file(file_name):
         """
-        Parse solidity sourcecode for function signatures and return the signature hash and function signature
-        :param code: solidity source code
-        :return: dictionary {sighash: function_signature}
+        :param file_name: accepts a filename
+        :return: their signature mappings
         """
         sigs = {}
+        cmd = ["solc", "--hashes", file_name]
+        try:
+            p = Popen(cmd, stdout=PIPE, stderr=PIPE)
+            stdout, stderr = p.communicate()
+            ret = p.returncode
 
-        funcs = re.findall(r'function[\s]+(.*?\))', code, re.DOTALL)
-        for f in funcs:
-            f = re.sub(r'[\n]', '', f)
-            m = re.search(r'^([A-Za-z0-9_]+)', f)
-
-            if m:
-                signature = m.group(1)
-                m = re.search(r'\((.*)\)', f)
-                _args = m.group(1).split(",")
-                types = []
-
-                for arg in _args:
-                    _type = arg.lstrip().split(" ")[0]
-
-                    if _type == "uint":
-                        _type = "uint256"
-
-                    types.append(_type)
-
-                typelist = ",".join(types)
-                signature += "(" + typelist + ")"
-                signature = re.sub(r'\s', '', signature)
-                sigs["0x" + utils.sha3(signature)[:4].hex()] = signature
-
-        logging.debug("Signatures: parse soldiity found %d signatures" % len(sigs))
+            if ret != 0:
+                raise CompilerError("Solc experienced a fatal error (code %d).\n\n%s" % (ret, stderr.decode('UTF-8')))
+        except FileNotFoundError:
+            raise CompilerError(
+                "Compiler not found. Make sure that solc is installed and in PATH, or set the SOLC environment variable.")
+        stdout = stdout.decode('unicode_escape').split('\n')
+        for line in stdout:
+            if '(' in line and ')' in line and ":" in line:        # the ':' need not be checked but just to be sure
+                sigs["0x"+line.split(':')[0]] = [line.split(":")[1].strip()]
+        logging.debug("Signatures: found %d signatures after parsing" % len(sigs))
         return sigs

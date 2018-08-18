@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# -*- coding: UTF-8 -*-
+# -*- coding: utf-8 -*-
 """mythril.py: Bug hunting on the Ethereum blockchain
 
    http://www.github.com/b-mueller/mythril
@@ -102,10 +102,11 @@ class Mythril(object):
             raise CriticalError("Invalid JSON in signatures file " + self.sigs.signatures_file + "\n" + str(jde))
 
         self.solc_binary = self._init_solc_binary(solv)
+        self.config_path = os.path.join(self.mythril_dir, 'config.ini')
         self.leveldb_dir = self._init_config()
 
         self.eth = None # ethereum API client
-        self.ethDb = None # ethereum LevelDB client
+        self.eth_db = None # ethereum LevelDB client
 
         self.contracts = []  # loaded contracts
 
@@ -123,42 +124,68 @@ class Mythril(object):
         return mythril_dir
 
     def _init_config(self):
+        """
+        If no config file exists, create it and add default options.
+        Default LevelDB path is specified based on OS
+        dynamic loading is set to infura by default in the file
+        Returns: leveldb directory
+        """
 
-        # If no config file exists, create it. Default LevelDB path is specified based on OS
-
-        config_path = os.path.join(self.mythril_dir, 'config.ini')
         system = platform.system().lower()
-        fallback_dir = os.path.expanduser('~')
+        leveldb_fallback_dir = os.path.expanduser('~')
         if system.startswith("darwin"):
-            fallback_dir = os.path.join(fallback_dir, "Library", "Ethereum")
+            leveldb_fallback_dir = os.path.join(leveldb_fallback_dir, "Library", "Ethereum")
         elif system.startswith("windows"):
-            fallback_dir = os.path.join(fallback_dir, "AppData", "Roaming", "Ethereum")
+            leveldb_fallback_dir = os.path.join(leveldb_fallback_dir, "AppData", "Roaming", "Ethereum")
         else:
-            fallback_dir = os.path.join(fallback_dir, ".ethereum")
-        fallback_dir = os.path.join(fallback_dir, "geth", "chaindata")
+            leveldb_fallback_dir = os.path.join(leveldb_fallback_dir, ".ethereum")
+        leveldb_fallback_dir = os.path.join(leveldb_fallback_dir, "geth", "chaindata")
 
-        if not os.path.exists(config_path):
-            logging.info("No config file found. Creating default: " + config_path)
-
-            config = ConfigParser(allow_no_value=True)
-            config.optionxform = str
-            config.add_section('defaults')
-            config.set('defaults', "#Default chaindata locations:")
-            config.set('defaults', "#– Mac: ~/Library/Ethereum/geth/chaindata")
-            config.set('defaults', "#– Linux: ~/.ethereum/geth/chaindata")
-            config.set('defaults', "#– Windows: %USERPROFILE%\\AppData\\Roaming\\Ethereum\\geth\\chaindata")
-            config.set('defaults', 'leveldb_dir', fallback_dir)
-            with codecs.open(config_path, 'w', 'utf-8') as fp:
-                config.write(fp)
+        if not os.path.exists(self.config_path):
+            logging.info("No config file found. Creating default: " + self.config_path)
+            open(self.config_path, 'a').close()
 
         config = ConfigParser(allow_no_value=True)
         config.optionxform = str
-        config.read(config_path, 'utf-8')
-        leveldb_dir = config.get('defaults', 'leveldb_dir', fallback=fallback_dir)
+        config.read(self.config_path, 'utf-8')
+        if 'defaults' not in config.sections():
+            self._add_default_options(config)
+
+        if not config.has_option('defaults', 'leveldb_dir'):
+            self._add_leveldb_option(config, leveldb_fallback_dir)
+
+        if not config.has_option('defaults', 'dynamic_loading'):
+            self._add_dynamic_loading_option(config)
+
+        with codecs.open(self.config_path, 'w', 'utf-8') as fp:
+            config.write(fp)
+
+        leveldb_dir = config.get('defaults', 'leveldb_dir', fallback=leveldb_fallback_dir)
         return os.path.expanduser(leveldb_dir)
 
+    @staticmethod
+    def _add_default_options(config):
+        config.add_section('defaults')
+
+    @staticmethod
+    def _add_leveldb_option(config, leveldb_fallback_dir):
+        config.set('defaults', "#Default chaindata locations:")
+        config.set('defaults', "#– Mac: ~/Library/Ethereum/geth/chaindata")
+        config.set('defaults', "#– Linux: ~/.ethereum/geth/chaindata")
+        config.set('defaults', "#– Windows: %USERPROFILE%\\AppData\\Roaming\\Ethereum\\geth\\chaindata")
+        config.set('defaults', 'leveldb_dir', leveldb_fallback_dir)
+
+    @staticmethod
+    def _add_dynamic_loading_option(config):
+        config.set('defaults', '#– To connect to Infura use dynamic_loading: infura')
+        config.set('defaults', '#– To connect to Ipc use dynamic_loading: ipc')
+        config.set('defaults', '#– To connect to Rpc use '
+                               'dynamic_loading: HOST:PORT / ganache / infura-[network_name]')
+        config.set('defaults', '#– To connect to local host use dynamic_loading: localhost')
+        config.set('defaults', 'dynamic_loading', 'infura')
+
     def analyze_truffle_project(self, *args, **kwargs):
-        return analyze_truffle_project(*args, **kwargs)  # just passthru for now
+        return analyze_truffle_project(self.sigs, *args, **kwargs)  # just passthru by passing signatures for now
 
     def _init_solc_binary(self, version):
         # Figure out solc binary and version
@@ -191,8 +218,8 @@ class Mythril(object):
         return solc_binary
 
     def set_api_leveldb(self, leveldb):
-        self.ethDb = EthLevelDB(leveldb)
-        self.eth = self.ethDb
+        self.eth_db = EthLevelDB(leveldb)
+        self.eth = self.eth_db
         return self.eth
 
     def set_api_rpc_infura(self):
@@ -231,17 +258,40 @@ class Mythril(object):
         self.eth = EthJsonRpc('localhost', 8545)
         logging.info("Using default RPC settings: http://localhost:8545")
 
+    def set_api_from_config_path(self):
+        config = ConfigParser(allow_no_value=False)
+        config.optionxform = str
+        config.read(self.config_path, 'utf-8')
+        if config.has_option('defaults', 'dynamic_loading'):
+            dynamic_loading = config.get('defaults', 'dynamic_loading')
+        else:
+            dynamic_loading = 'infura'
+        if dynamic_loading == 'ipc':
+            self.set_api_ipc()
+        elif dynamic_loading == 'infura':
+            self.set_api_rpc_infura()
+        elif dynamic_loading == 'localhost':
+            self.set_api_rpc_localhost()
+        else:
+            self.set_api_rpc(dynamic_loading)
+
     def search_db(self, search):
 
-        def search_callback(code_hash, code, addresses, balances):
-            for i in range(0, len(addresses)):
-                print("Address Hash: " + addresses[i] + ", balance: " + str(balances[i]))
+        def search_callback(contract, address, balance):
+
+            print("Address: " + address + ", balance: " + str(balance))
 
         try:
-            self.ethDb.search(search, search_callback)
+            self.eth_db.search(search, search_callback)
 
         except SyntaxError:
             raise CriticalError("Syntax error in search expression.")
+
+    def contract_hash_to_address(self, hash):
+        if not re.match(r'0x[a-fA-F0-9]{64}', hash):
+             raise CriticalError("Invalid address hash. Expected format is '0x...'.")
+
+        print(self.eth_db.contract_hash_to_address(hash))
 
     def load_from_bytecode(self, code):
         address = util.get_indexed_address(0)
@@ -285,8 +335,10 @@ class Mythril(object):
 
             try:
                 # import signatures from solidity source
-                with open(file, encoding="utf-8") as f:
-                    self.sigs.import_from_solidity_source(f.read())
+                self.sigs.import_from_solidity_source(file)
+                # Save updated function signatures
+                self.sigs.write()  # dump signatures to disk (previously opened file or default location)
+
                 if contract_name is not None:
                     contract = SolidityContract(file, contract_name, solc_args=self.solc_args)
                     self.contracts.append(contract)
@@ -296,6 +348,7 @@ class Mythril(object):
                         self.contracts.append(contract)
                         contracts.append(contract)
 
+
             except FileNotFoundError:
                 raise CriticalError("Input file not found: " + file)
             except CompilerError as e:
@@ -303,8 +356,6 @@ class Mythril(object):
             except NoContractFoundError:
                 logging.info("The file " + file + " does not contain a compilable contract.")
 
-        # Save updated function signatures
-        self.sigs.write()  # dump signatures to disk (previously opened file or default location)
 
         return address, contracts
 
@@ -316,20 +367,17 @@ class Mythril(object):
 
         return get_serializable_statespace(sym)
 
-    def graph_html(self, strategy, contract, address, max_depth=12, enable_physics=False, phrackify=False):
+    def graph_html(self, strategy, contract, address, max_depth=12, enable_physics=False, phrackify=False, execution_timeout=None):
         sym = SymExecWrapper(contract, address, strategy,
                              dynloader=DynLoader(self.eth) if self.dynld else None,
-                             max_depth=max_depth)
+                             max_depth=max_depth, execution_timeout=execution_timeout)
         return generate_graph(sym, physics=enable_physics, phrackify=phrackify)
 
     def fire_lasers(self, strategy, contracts=None, address=None,
                     modules=None,
                     verbose_report=False, max_depth=None, execution_timeout=None, ):
 
-
         all_issues = []
-        if self.dynld and self.eth is None:
-            self.set_api_rpc_infura()
         for contract in (contracts or self.contracts):
             sym = SymExecWrapper(contract, address, strategy,
                                  dynloader=DynLoader(self.eth) if self.dynld else None,
