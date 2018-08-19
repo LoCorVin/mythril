@@ -82,6 +82,19 @@ class SolidityFunction:
         if not is_last_stmt_a_return(f_def):
             self.terminating_pos.append((int(pos[0]) + int(pos[1]) - 1, 0))
 
+class SymbolicCodeExtension:
+
+    def __init__(self, symbolic_name, contract_name, extension_byte_size):
+        self.symbolic_name = symbolic_name
+        self.contract_name = contract_name
+        self.extension_byte_size = extension_byte_size
+
+    def __len__(self):
+        return self.extension_byte_size
+
+    def __getitem__(self, item):
+        return BitVec(self.symbolic_name + "_" + self.contract_name + "[" + str(item) + "]", 256)
+
 
 def find_all(a_str, sub):
     start = 0
@@ -440,8 +453,11 @@ class SolidNotary:
         # Symbolic execution of construction and transactions
         print("Constructor and Transaction")
 
+        constr_calldata_len = get_minimal_constructor_param_encoding_len(abi_json_to_abi(contract.abi))
+        sym_code_extension = SymbolicCodeExtension("calldata", contract.name, constr_calldata_len)
+
         sym_transactions = SymExecWrapper(contract, self.address, laser_strategy, dynloader, max_depth=self.max_depth,
-                                          prepostprocessor=annotationsProcessor) # Todo Mix the annotation Processors or mix ignore listst
+                                          prepostprocessor=annotationsProcessor, code_extension=sym_code_extension) # Todo Mix the annotation Processors or mix ignore listst
         print("Construction Violations: " + str(len(reduce(lambda x, y: x + y, annotationsProcessor.create_violations, []))))
         print("Transaction Violations: " + str(len(reduce(lambda x, y: x + y, annotationsProcessor.trans_violations, []))))
 

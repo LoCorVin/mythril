@@ -40,4 +40,8 @@ def get_named_instructions_with_mappings(instruction_list, mappings, opcode):
     return instructions_and_mappings
 
 
+def flatten(list_to_flatten):
+    return [item for sublist in list_to_flatten for item in sublist]
+
+
 

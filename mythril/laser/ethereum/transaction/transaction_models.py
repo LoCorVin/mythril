@@ -108,6 +108,9 @@ class ContractCreationTransaction:
             self.code,
             calldata_type=self.call_data_type,
         )
+        if hasattr(self, "code_extension"):
+            environment.code_extension = self.code_extension
+
 
         global_state = GlobalState(self.world_state, environment, None)
         global_state.environment.active_function_name = 'constructor'

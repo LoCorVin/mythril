@@ -31,7 +31,7 @@ def execute_message_call(laser_evm, callee_address):
     laser_evm.exec()
 
 
-def execute_contract_creation(laser_evm, contract_initialization_code, contract_name):
+def execute_contract_creation(laser_evm, contract_initialization_code, contract_name, code_extension=None):
     """ Executes a contract creation transaction from all open states"""
     open_states = laser_evm.open_states[:]
     del laser_evm.open_states[:]
@@ -50,6 +50,8 @@ def execute_contract_creation(laser_evm, contract_initialization_code, contract_
             BitVec("origin", 256),
             CalldataType.SYMBOLIC
         )
+        if code_extension:
+            transaction.code_extension = code_extension
 
         _setup_global_state_for_execution(laser_evm, transaction)
     laser_evm.exec(True)

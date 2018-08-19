@@ -1,6 +1,7 @@
 from z3 import *
 from .z3utility import get_function_from_constraint, simplify_constraints_individually
 from copy import deepcopy
+from .sn_utils import flatten
 import re
 from mythril.solidnotary.z3utility import are_satisfiable, simplify_constraints, simplify_z3_constraints, \
     extract_sym_names, filter_for_t_variable_data
@@ -25,8 +26,6 @@ def deep_bitvec_substitute(obj, subs_map):
 
 
 
-def flatten(list_to_flatten):
-    return [item for sublist in list_to_flatten for item in sublist]
 
 class TransactionTrace:
 
@@ -78,7 +77,7 @@ class TransactionTrace:
         print()
 
     def add_transaction_idx(self, offset):# Delete if no error shows
-        pass
+
         new_names = []
         for name in self.sym_names:
             matched_name = re.search(r't([0-9]+)(_.*)', name)
@@ -115,7 +114,7 @@ class TransactionTrace:
     # Todo merge this (transaction depth add) subs with the other(storage slot) subs
 
     def substitute_bv_names(self, subs_tuple):
-        subs_tuples = list(map(lambda name_t: (name_t[0], BitVec(name_t[1], 256), ([name_t[0]], [])), subs_tuple))
+        subs_tuples = list(map(lambda name_t: (name_t[0], BitVec(name_t[1], 256), ([name_t[1]], [])), subs_tuple))
         for s_num, _ in self.storage.items():
             self.storage[s_num].substitute(subs_tuples)
         for c_idx in range(len(self.tran_constraints)):
@@ -168,7 +167,7 @@ class TransactionTrace:
         new_trace = deepcopy(tt)
         subs_map = list(map(lambda x: (x[0], BitVec(x[1], 256), ([x[1]], [])), new_trace.get_transaction_depth_repl_tuples(self.lvl)))
 
-        subs_map.extend(list(map(lambda x: ("storage_" + str(x[0]), x[1].slot, (x[1].sym_names, x[1].slot_names)), self.storage.items()))) # Build this map only once
+        subs_map.extend(list(map(lambda x: ("storage[" + str(x[0]) + "]", x[1].slot, (x[1].sym_names, x[1].slot_names)), self.storage.items()))) # Build this map only once
 
         for k,v in new_trace.storage.items():
             new_trace.storage[k].substitute(subs_map)  # Todo substitute only if necessary

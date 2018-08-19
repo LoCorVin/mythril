@@ -14,7 +14,7 @@ class SymExecWrapper:
     Wrapper class for the LASER Symbolic virtual machine. Symbolically executes the code and does a bit of pre-analysis for convenience.
     '''
 
-    def __init__(self, contract, address, strategy, dynloader=None, max_depth=22, execution_timeout=None, prepostprocessor=None):
+    def __init__(self, contract, address, strategy, dynloader=None, max_depth=22, execution_timeout=None, prepostprocessor=None, code_extension=None):
         s_strategy = None
         if strategy == 'dfs':
             s_strategy = DepthFirstSearchStrategy
@@ -31,7 +31,7 @@ class SymExecWrapper:
 
 
         if isinstance(contract, SolidityContract):
-            self.laser.sym_exec(creation_code=contract.creation_code, contract_name=contract.name)
+            self.laser.sym_exec(creation_code=contract.creation_code, contract_name=contract.name,code_extension=code_extension)
         else:
             self.laser.sym_exec(address)
 

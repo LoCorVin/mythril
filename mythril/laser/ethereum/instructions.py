@@ -469,7 +469,10 @@ class Instruction:
         state = global_state.mstate
         environment = global_state.environment
         disassembly = environment.code
-        state.stack.append(len(disassembly.bytecode) // 2)
+        if hasattr(environment, "code_extension"):
+            state.stack.append(len(disassembly.bytecode) // 2 + len(environment.code_extension))
+        else:
+            state.stack.append(len(disassembly.bytecode) // 2)
         return [global_state]
 
     @instruction
@@ -552,8 +555,11 @@ class Instruction:
                 global_state.mstate.memory[concrete_memory_offset + i] =\
                     int(bytecode[2*(concrete_code_offset + i): 2*(concrete_code_offset + i + 1)], 16)
             else:
-                global_state.mstate.memory[concrete_memory_offset + i] = \
-                    BitVec("code({})".format(global_state.environment.active_account.contract_name), 256)
+                if concrete_code_offset + i + 1 <= len(bytecode) / 2 + len(global_state.environment.code_extension):
+                    global_state.mstate.memory[concrete_memory_offset + i] = global_state.environment.code_extension[concrete_code_offset + i - int(len(bytecode) / 2)]
+                else:
+                    global_state.mstate.memory[concrete_memory_offset + i] = \
+                        BitVec("code({})".format(global_state.environment.active_account.contract_name), 256)
 
         return [global_state]
 

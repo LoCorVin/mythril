@@ -1,5 +1,6 @@
 from mythril.solidnotary.z3utility import extract_sym_names, filter_for_t_variable_data
 from z3 import substitute, BitVec, simplify
+from .sn_utils import flatten
 
 optimized = True
 
@@ -32,8 +33,8 @@ class Constraint:
             filtered_names = [sub[0] for sub in filtered_sub_map]
             self.sym_names = [name for name in self.sym_names if name not in filtered_names]
             self.slot_names = [name for name in self.slot_names if name not in filtered_names]
-            self.sym_names.extend([sub[2][0] for sub in filtered_sub_map])
-            self.slot_names.extend([sub[2][1] for sub in filtered_sub_map])
+            self.sym_names.extend(flatten([sub[2][0] for sub in filtered_sub_map]))
+            self.slot_names.extend(flatten([sub[2][1] for sub in filtered_sub_map]))
 
 class Slot:
 
@@ -63,6 +64,6 @@ class Slot:
             filtered_names = [sub[0] for sub in filtered_sub_map]
             self.sym_names = [name for name in self.sym_names if name not in filtered_names]
             self.slot_names = [name for name in self.slot_names if name not in filtered_names]
-            self.sym_names.extend([sub[2][0] for sub in filtered_sub_map])
-            self.slot_names.extend([sub[2][1] for sub in filtered_sub_map])
+            self.sym_names.extend(flatten([sub[2][0] for sub in filtered_sub_map]))
+            self.slot_names.extend(flatten([sub[2][1] for sub in filtered_sub_map]))
 
