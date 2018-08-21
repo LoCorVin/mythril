@@ -12,6 +12,14 @@ class SourceMapping:
         self.length = length
         self.lineno = lineno
 
+    def __str__(self):
+        return str(self.as_dict)
+
+
+    @property
+    def as_dict(self):
+        return {'fil_idx': self.solidity_file_idx, 'offset': self.offset, 'length': self.length, 'lineno': self.lineno}
+
 
 class SolidityFile:
 
@@ -86,7 +94,6 @@ class SolidityContract(ETHContract):
                     code = contract['bin-runtime']
                     abi = contract['abi']
                     creation_code = contract['bin']
-                    print(contract['srcmap-runtime'].count(';'))
                     srcmap = contract['srcmap-runtime'].split(";")
                     creation_srcmap = contract['srcmap'].split(";")
                     has_contract = True

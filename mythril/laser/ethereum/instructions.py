@@ -53,6 +53,8 @@ class Instruction:
         # Generalize some ops
         logging.debug("Evaluating {}".format(self.op_code))
         op = self.op_code.lower()
+        if self.op_code.startswith("MOD"):
+            print()
         if self.op_code.startswith("PUSH"):
             op = "push"
         elif self.op_code.startswith("DUP"):

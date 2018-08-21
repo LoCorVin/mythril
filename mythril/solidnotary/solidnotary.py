@@ -7,15 +7,17 @@ import mythril.laser.ethereum.util as helper
 from mythril.laser.ethereum.state import MachineState, GlobalState, Account, Environment, CalldataType
 from mythril.laser.ethereum.transaction import ContractCreationTransaction
 
-
+from .sn_utils import get_sourcecode_and_mapping
 from .transactiontrace import TransactionTrace
 from .z3utility import are_z3_satisfiable
 from .calldata import get_minimal_constructor_param_encoding_len, abi_json_to_abi, get_calldata_name_map
 from .coderewriter import write_code, get_code, replace_comments_with_whitespace, apply_rewriting
-
 from .codeparser import find_matching_closed_bracket, newlines, get_newlinetype
 from .stateprocessing import AnnotationProcessor
 from .annotation import annotation_kw, init_annotation, increase_rewritten_pos, comment_out_annotations, expand_rew
+from .ast_parser import get_contract_ast, get_function_asts, get_function_param_tuples, get_function_term_positions
+from .storage_members import extract_storage_map
+
 from z3 import BitVec,eq
 from os.path import exists, isdir, dirname, isfile, join
 from os import makedirs, chdir, listdir, getcwd
@@ -32,8 +34,9 @@ laser_strategy = "dfs"
 
 class SolidityFunction:
 
-    def __init__(self, f_def, calldata_name_map):
-        attributes = f_def['attributes']
+    def __init__(self, f_ast, calldata_name_map):
+        attributes = f_ast['attributes']
+
 
         self.constant = attributes['constant']
         self.implemented = attributes['implemented']
@@ -45,12 +48,11 @@ class SolidityFunction:
         self.isConstructor = attributes['isConstructor']
         self.params = []
 
-
-        parameter_list = get_all_nested_dicts_with_kv_pairs(f_def['children'], 'name', 'ParameterList')[0]
+        self.params = get_function_param_tuples(f_ast)
         params = ""
-        for param in parameter_list['children']:
-            self.params.append((param['attributes']['name'], param['attributes']['type']))
-            params += param['attributes']['type'] + ","
+        for param in self.params:
+            params += param[1] + ","
+
         if len(params) > 0:
             params = params[:len(params)-1]
         if self.isConstructor:
@@ -63,24 +65,8 @@ class SolidityFunction:
         self.calldata_name_map = calldata_name_map[self.signature]
 
         # Parses the positions in the function where exution might terminated due to a return
-        self.terminating_pos = []
-        returns = get_all_nested_dicts_with_kv_pairs(f_def, "name", "Return")
-        for ret in returns:
-            pos_r = ret['src'].split(':')
-            self.terminating_pos.append((int(pos_r[0]), int(pos_r[1])))
-        self.return_types = []
-        if returns:
-            # Finds return stmt and the id of the element holding the type information
-            ret_param_id = returns[0]['attributes']['functionReturnParameters']
-            # finds the subelement holding the information on the return param types
-            return_params = get_all_nested_dicts_with_kv_pairs(f_def, 'id', ret_param_id)[0]
-            for child in return_params['children']:
-                if child['attributes']['type']:
-                    self.return_types.append(child['attributes']['type'])
-        # Uses src attribute to find position in file
-        pos = f_def['src'].split(':')
-        if not is_last_stmt_a_return(f_def):
-            self.terminating_pos.append((int(pos[0]) + int(pos[1]) - 1, 0))
+        self. return_types, self.terminating_pos = get_function_term_positions(f_ast)
+
 
 class SymbolicCodeExtension:
 
@@ -114,13 +100,6 @@ def count_elements(source, elements):
 def replace_index(text, toReplace, replacement, index):
     return text[:index] + replacement + text[(index + len(toReplace)):]
 
-def get_sourcecode_and_mapping(address, instr_list, mappings):
-    index = helper.get_instruction_index(instr_list, address)
-    if index is not None and len(mappings) > index:
-        return mappings[index]
-    else:
-        return None
-
 
 def get_containing_file(contract):
     contract_name = contract.name
@@ -131,50 +110,6 @@ def get_containing_file(contract):
             containing_file = sol_file
             break
     return containing_file
-
-def get_last_child(obj):
-    if type(obj) == dict:
-        return obj['children'][-1]
-    raise RuntimeError("No children to retrieve the last one")
-
-def is_last_stmt_a_return(f_def):
-    block = None
-    for child in f_def['children']:
-        if 'name' in child and child['name'] == 'Block':
-            block = child
-    if not block:
-        raise RuntimeError("Function has no block in ast")
-    last_child = get_last_child(block)
-    return last_child['name'] == 'Return'
-
-
-def get_containing_kv_pairs(obj, key):
-    pairs = []
-    if type(obj) == dict:
-        if key in obj:
-            pairs.extend((key, obj[key]))
-        for k,v in obj.items():
-            pairs.extend(get_containing_kv_pairs(v, key))
-    elif type(obj) == list:
-        for elem in obj:
-            pairs.extend(get_containing_kv_pairs(elem, key))
-    return pairs
-
-"""
-    If dictionary with specified key, value pair can contain a dict with the key, value pair this nested dict is 
-    returned to. Removing the specified line avoids this
-"""
-def get_all_nested_dicts_with_kv_pairs(obj, key, value):
-    dicts = []
-    if type(obj) == dict:
-        for k, v in obj.items():
-            if k == key and v == value:
-                dicts.append(obj)
-            dicts.extend(get_all_nested_dicts_with_kv_pairs(v, key, value))
-    elif type(obj) == list:
-        for elem in obj:
-            dicts.extend(get_all_nested_dicts_with_kv_pairs(elem, key, value))
-    return dicts
 
 def get_function_by_name(contract, name):
     function_list = []
@@ -195,16 +130,15 @@ def get_function_by_inthash(contract, value):
 """
     Parses the ast to find all positions where a contract might terminate with a transactions execution.
 """
-def augment_with_functions(contract):
+def augment_with_ast_info(contract):
     contract.functions = []
     contract_file = get_containing_file(contract)
     ast = contract_file.ast
-    contract_asts = get_all_nested_dicts_with_kv_pairs(ast, "name", "ContractDefinition")
-    contract_ast = list(filter(lambda c_ast: c_ast['attributes']['name'] == contract.name, contract_asts))[0]
-    f_defs = get_all_nested_dicts_with_kv_pairs(contract_ast, "name", "FunctionDefinition")
+    contract.ast = get_contract_ast(ast, contract.name) # Attention, here we write over a already filled variable
+    f_asts = get_function_asts(contract.ast)
     contract.calldata_name_map = get_calldata_name_map(abi_json_to_abi(contract.abi))
-    for f_def in f_defs:
-        contract.functions.append(SolidityFunction(f_def, contract.calldata_name_map))
+    for f_ast in f_asts:
+        contract.functions.append(SolidityFunction(f_ast, contract.calldata_name_map))
 
 
 def find_contract_idx_range(contract):
@@ -289,6 +223,9 @@ class SolidNotary:
         self.annotation_map = {}
         self.annotated_contracts = []
 
+
+        self.storage_map = {}
+
     def create_tmp_dir(self):
         self.tmp_dir = self.wd + "/" + tmp_dir_name
 
@@ -317,7 +254,7 @@ class SolidNotary:
                 copy(full_file_name, self.tmp_dir)
                 # Todo consider subdirectories and symbolic links
 
-    def provide_resources(self, contracts, address, eth, dynld, sigs, max_depth=float('inf')):
+    def provide_resources(self, contracts, address, eth, dynld, sigs, max_depth=50):
         self.contracts = contracts
         self.address = address
         self.eth = eth
@@ -339,7 +276,7 @@ class SolidNotary:
             code = code[contract_range[0]:contract_range[2]]
 
 
-            augment_with_functions(contract)
+            augment_with_ast_info(contract)
             for function in contract.functions:
                 function.terminating_pos = list(map(lambda pos: (pos[0] - contract_range[0], pos[1]), function.terminating_pos))
 
@@ -353,6 +290,8 @@ class SolidNotary:
 
                     self.annotation_map[contract.name].append(annotation)
                     annot_iter = next(annot_iterator, None)
+
+
 
     def build_annotated_contracts(self):
         for contract in self.contracts:
@@ -403,13 +342,15 @@ class SolidNotary:
             write_code(sol_file.filename, rew_file_code)
 
             anotation_contract = SolidityContract(sol_file.filename, contract.name, solc_args=self.solc_args)
-            augment_with_functions(anotation_contract)
+            augment_with_ast_info(anotation_contract)
             self.annotated_contracts.append(anotation_contract)
 
             for annotation in self.annotation_map[contract.name]:
                 annotation.set_annotation_contract(anotation_contract)
 
             write_code(sol_file.filename, origin_file_code)
+            self.storage_map[contract.name] = extract_storage_map(contract.ast)
+
 
     def get_traces_and_build_violations(self, contract):
         dynloader = DynLoader(self.eth) if self.dynld else None
@@ -448,7 +389,7 @@ class SolidNotary:
 
         # Used to run annotations violation build in traces construction in parallel
         annotationsProcessor = AnnotationProcessor(contract.creation_disassembly.instruction_list,
-                                                   contract.disassembly.instruction_list, create_ignore_list, trans_ignore_list)
+                                                   contract.disassembly.instruction_list, create_ignore_list, trans_ignore_list, contract)
 
         # Symbolic execution of construction and transactions
         print("Constructor and Transaction")

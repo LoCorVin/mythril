@@ -1,6 +1,7 @@
 from z3 import BitVec
 import logging
 from mythril.laser.ethereum.state import WorldState
+from mythril.solidnotary.debugc import printd
 from mythril.laser.ethereum.transaction import TransactionStartSignal, TransactionEndSignal, \
     ContractCreationTransaction
 from mythril.laser.ethereum.instructions import Instruction
@@ -144,7 +145,7 @@ class LaserEVM:
                 new_global_states = self.prepostprocessor.postprocess(global_state, new_global_states)
 
         except TransactionStartSignal as e:
-            print("Transaction start")
+            printd("Transaction start")
             # Setup new global state
             new_global_state = e.transaction.initial_global_state()
 
@@ -155,7 +156,7 @@ class LaserEVM:
             return [new_global_state], op_code
 
         except TransactionEndSignal as e: # Todo Watch out here
-            print("Transaction end")
+            printd("Transaction end")
             transaction, return_global_state = e.global_state.transaction_stack.pop()
 
             if return_global_state is None:

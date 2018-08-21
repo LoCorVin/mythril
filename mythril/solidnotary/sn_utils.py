@@ -21,6 +21,13 @@ def get_source_information(contract, instruction_list, mappings, address):
 
     return SourceCodeInfo(filename, lineno, code)
 
+def get_sourcecode_and_mapping(address, instr_list, mappings):
+    index = helper.get_instruction_index(instr_list, address)
+    if index is not None and len(mappings) > index:
+        return mappings[index]
+    else:
+        return None
+
 def get_named_instruction(instruction_list, opcode):
     instructions = []
 

@@ -5,6 +5,8 @@ from copy import deepcopy
 from enum import Enum
 from z3 import simplify
 from .z3utility import are_z3_satisfiable
+from .sn_utils import get_sourcecode_and_mapping
+from .debugc import printd
 
 def instr_eq(instr1, instr2):
     if instr1['address'] == instr2['address'] and instr1['opcode'] == instr2['opcode'] and ('argument' in instr1) == ('argument' in instr2) and ('argument' not in instr1 or instr1['argument'] == instr2['argument']):
@@ -55,7 +57,9 @@ class AnnotationProcessor(PrePostProcessor):
     # mythril analysis modules on the modified contract might give different results due to the processing of nodes and not states
     # actual but previous insturction that might me on the ignore list.
 
-    def __init__(self, create_instructions, trans_instructions, create_ignore_list, trans_ignore_list):
+    def __init__(self, create_instructions, trans_instructions, create_ignore_list, trans_ignore_list, contract):
+
+        self.contract = contract
 
         self.create_instructions = create_instructions
         self.trans_instructions = trans_instructions
@@ -123,19 +127,29 @@ class AnnotationProcessor(PrePostProcessor):
         instr = instructions[global_state.mstate.pc]
 
         if hasattr(global_state, "duplicate"):
-            print("Pick up duplicate")
+            printd("Pick up duplicate")
 
-
-        print(self.get_context_instructions(global_state)[instr_index(self.get_context_instructions(global_state), instr)])
+        message_type = "T"
+        mappings = self.contract.mappings
+        istr_list = global_state.environment.code.instruction_list
+        if isinstance(global_state.current_transaction, ContractCreationTransaction):
+            message_type = "C"
+            mappings = self.contract.creation_mappings
+        instruction = self.get_context_instructions(global_state)[
+                                           instr_index(self.get_context_instructions(global_state), instr)]
+        printd(message_type + " " + str( instruction)+ " m: " + str(get_sourcecode_and_mapping(instruction['address'], istr_list, mappings)))
+        #print(message_type +" " + str(self.get_context_instructions(global_state)[instr_index(self.get_context_instructions(global_state), instr)])\
+        #+ "     " + str(global_state.environment.active_account.storage._storage).replace("\n", "") + "    "
+        #        + str(global_state.mstate.stack).replace("\n", ""))
         if self.is_this_or_previouse_ignore_type(global_state, IType.ENTRY):
             if hasattr(global_state, 'saved_state'): # Skip
-                print("Skip")
+                printd("Skip")
                 ign_exit_istr = self.get_ignore_tuple(global_state, IType.ENTRY)[IType.EXIT.value]
                 istr_idx = instr_index(instructions, ign_exit_istr)
                 global_state.mstate.pc = istr_idx + 1
             else: # Save
                 # Todo Here we do now only MARK the state to be ignored
-                print("Save")
+                printd("Save")
                 helper_state_ref = global_state
                 global_state = deepcopy(helper_state_ref)
                 global_state.saved_state = helper_state_ref
@@ -143,7 +157,7 @@ class AnnotationProcessor(PrePostProcessor):
                 self.state_ctr += 1
 
         if self.is_this_or_previouse_ignore_type(global_state, IType.VIOLATION): # violation
-            print("violation")
+            printd("violation")
             for idx in range(len(global_state.mstate.constraints)):
                 global_state.mstate.constraints[idx] = simplify(global_state.mstate.constraints[idx])
             if are_z3_satisfiable(global_state.mstate.constraints):
@@ -166,7 +180,7 @@ class AnnotationProcessor(PrePostProcessor):
         returnable_new_states = []
 
         if hasattr(global_state, 'ignore'):
-            print("carry")
+            printd("carry")
             for new_state in new_global_states:
                 new_state.ignore = global_state.ignore
 
@@ -189,21 +203,19 @@ class AnnotationProcessor(PrePostProcessor):
             instr = global_state.environment.code.instruction_list[global_state.mstate.pc]
             new_instr = self.get_context_instructions(new_state)[new_state.mstate.pc]
 
-            if global_state.environment.code.instruction_list[new_state.mstate.pc]['address'] == 36:
-                print()
             if self.is_this_or_previouse_ignore_type(new_state, IType.ENTRY):
-                print("Duplicate new")
+                printd("Duplicate new")
                 skip_state = new_state # Not using deepcopy here anymore, leeds to missing states in node in statespace
                 new_global_states[state_idx] = None
 
                 while self.is_this_or_previouse_ignore_type(skip_state, IType.ENTRY):
-                    print(str(self.get_context_instructions(skip_state)[skip_state.mstate.pc]))
+                    printd(str(self.get_context_instructions(skip_state)[skip_state.mstate.pc]))
 
                     # Leave a new state to start the execution of the part to be ignored by the rest
                     ign_state = deepcopy(skip_state)
                     ign_state.ignore = "ignore"
                     returnable_new_states.append(ign_state)
-                    print("Leave ignore state to process                " + str(self.get_context_instructions(ign_state)[instr_index(self.get_context_instructions(ign_state), instr)]))
+                    printd("Leave ignore state to process                " + str(self.get_context_instructions(ign_state)[instr_index(self.get_context_instructions(ign_state), instr)]))
 
                     # set skip state to the next instruction that may again be a regular one
                     ign_exit_istr = self.get_ignore_tuple(skip_state, IType.ENTRY)[IType.EXIT.value]
@@ -212,13 +224,13 @@ class AnnotationProcessor(PrePostProcessor):
                 # After skip state finally reached an instruction that is not another entry it is marked as dublicate
                 skip_state.duplicate = "duplicate"
 
-                print("Final skip state" + str(self.get_context_instructions(skip_state)[skip_state.mstate.pc]))
+                printd("Final skip state" + str(self.get_context_instructions(skip_state)[skip_state.mstate.pc]))
                 returnable_new_states.append(skip_state)
 
 
             # Is exit instruction
             if self.is_this_or_previouse_ignore_type(global_state, IType.EXIT) and not hasattr(global_state, "duplicate"):
-                print("Drop at exit")
+                printd("Drop at exit")
                 return returnable_new_states # Todo Drop only the ignored once at exit?
 #                if hasattr(new_state, 'saved_state'):
 #                    new_global_states[state_idx] = None
