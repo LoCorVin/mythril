@@ -241,7 +241,7 @@ class Instruction:
             else:
                 state.stack.append(base << (exponent - 1))
         else:
-            state.stack.append(base)
+            state.stack.append(BitVecVal(base.as_long() ** exponent.as_long(), 256))
         return [global_state]
 
     @instruction
