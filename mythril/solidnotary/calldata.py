@@ -1,9 +1,11 @@
 from re import findall,search, escape, finditer
 from mythril.exceptions import CompilerError
 from subprocess import Popen, PIPE
-from .codeparser import find_matching_closed_bracket
 import json
 import sys
+
+from .codeparser import find_matching_closed_bracket
+from .sn_utils import flatten
 
 class CalldataMap:
 
@@ -153,9 +155,6 @@ def get_solc_abi_json(file, solc_binary="solc", solc_args=None):
     print(out)
 
     return json.loads(out)
-
-def flatten(to_flatten):
-    return [item for sublist in to_flatten for item in sublist]
 
 def get_params_name_map(abi_obj):
     if type(abi_obj) == list:

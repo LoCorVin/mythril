@@ -1,5 +1,5 @@
 from z3 import *
-from .z3utility import get_function_from_constraint, simplify_constraints_individually
+from .z3utility import get_function_from_constraint, simplify_constraints_individually, sanitize_expr
 from copy import deepcopy
 from .sn_utils import flatten
 import re
@@ -30,7 +30,7 @@ def deep_bitvec_substitute(obj, subs_map):
 class TransactionTrace:
 
     def __init__(self, storage, constraints, contract=None, lvl=1):
-        self.storage = deepcopy(storage)
+        # self.storage = {k: simplify(v) for k,v in storage }
         self.constraints = simplify_constraints_individually(constraints)
         if contract:
             self.function = get_function_from_constraint(contract, self.constraints)
@@ -41,7 +41,7 @@ class TransactionTrace:
 
 
         # Or hook transformation in here
-        self.storage = {s_name: Slot(s_name, z3_vars) for (s_name, z3_vars) in self.storage._storage.items()}
+        self.storage = {s_name: Slot(s_name, simplify(sanitize_expr(z3_vars))) for (s_name, z3_vars) in storage._storage.items()}
         self.constraints = [Constraint(constraint) for constraint in self.constraints]
 
         self.tran_constraints = deepcopy(self.constraints)

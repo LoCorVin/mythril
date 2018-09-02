@@ -137,7 +137,10 @@ class AnnotationProcessor(PrePostProcessor):
             mappings = self.contract.creation_mappings
         instruction = self.get_context_instructions(global_state)[
                                            instr_index(self.get_context_instructions(global_state), instr)]
-        printd(message_type + " " + str( instruction)+ " m: " + str(get_sourcecode_and_mapping(instruction['address'], istr_list, mappings)))
+        # printd(message_type + " " + str( instruction)+ " m: " + str(get_sourcecode_and_mapping(instruction['address'], istr_list, mappings)))
+
+        printd(message_type + " " + str( instruction) + " stack: " + str(global_state.mstate.stack).replace("\n", ""))
+
         #print(message_type +" " + str(self.get_context_instructions(global_state)[instr_index(self.get_context_instructions(global_state), instr)])\
         #+ "     " + str(global_state.environment.active_account.storage._storage).replace("\n", "") + "    "
         #        + str(global_state.mstate.stack).replace("\n", ""))

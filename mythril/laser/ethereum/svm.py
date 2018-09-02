@@ -81,8 +81,8 @@ class LaserEVM:
             print("Finished contract creation")
             logging.info("Finished contract creation, found {} open states".format(len(self.open_states)))
             if len(self.open_states) == 0:
-                print("No contract was created during the execution of contract creation"
-                      "Try to increase the resouces for creation exection (max-depth or create_timeout)")
+                print("No contract was created during the execution of contract creation "
+                      "Try to increase the resources for creation exection (max-depth or create_timeout)")
 
             # Reset code coverage
             self.coverage = {}
@@ -127,9 +127,11 @@ class LaserEVM:
 
     def execute_state(self, global_state):
         instructions = global_state.environment.code.instruction_list
-        op_code = instructions[global_state.mstate.pc]['opcode']
-
-        #print(global_state.environment.code.instruction_list[global_state.mstate.pc])
+        try:
+            op_code = instructions[global_state.mstate.pc]['opcode']
+        except IndexError:
+            self.open_states.append(global_state.world_state)
+            return [], None
 
         self._execute_pre_hook(op_code, global_state)
         try:

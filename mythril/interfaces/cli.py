@@ -47,6 +47,8 @@ def main():
 
     inputs = parser.add_argument_group('input arguments')
     inputs.add_argument('-c', '--code', help='hex-encoded bytecode string ("6060604052...")', metavar='BYTECODE')
+    inputs.add_argument('-f', '--codefile', help='file containing hex-encoded bytecode string', 
+            metavar='BYTECODEFILE', type=argparse.FileType('r'))
     inputs.add_argument('-a', '--address', help='pull contract from the blockchain', metavar='CONTRACT_ADDRESS')
     inputs.add_argument('-l', '--dynld', action='store_true', help='auto-load dependencies from the blockchain')
 
@@ -73,6 +75,8 @@ def main():
     options.add_argument('--max-depth', type=int, default=22, help='Maximum recursion depth for symbolic execution')
     options.add_argument('--strategy', choices=['dfs', 'bfs'], default='dfs', help='Symbolic execution strategy')
     options.add_argument('--execution-timeout', type=int, default=600, help="The amount of seconds to spend on symbolic execution")
+    options.add_argument('--create-timeout', type=int, default=10, help="The amount of seconds to spend on "
+                                                                        "the initial contract creation")
     options.add_argument('--solc-args', help='Extra arguments for solc')
     options.add_argument('--phrack', action='store_true', help='Phrack-style call graph')
     options.add_argument('--enable-physics', action='store_true', help='enable graph physics simulation')
@@ -123,7 +127,7 @@ def main():
             mythril.set_api_from_config_path()
 
         if args.address:
-            # Establish RPC/IPC connection if necessary
+            # Establish RPC connection if necessary
             if args.i:
                 mythril.set_api_rpc_infura()
             elif args.rpc:
@@ -163,6 +167,9 @@ def main():
         if args.code:
             # Load from bytecode
             address, _ = mythril.load_from_bytecode(args.code)
+        elif args.codefile:
+            bytecode = ''.join([l.strip() for l in args.codefile if len(l.strip()) > 0])
+            address, _ = mythril.load_from_bytecode(bytecode)
         elif args.address:
             # Get bytecode from a contract address
             address, _ = mythril.load_from_address(args.address)
@@ -207,7 +214,8 @@ def main():
             if args.graph:
                 html = mythril.graph_html(strategy=args.strategy, contract=mythril.contracts[0], address=address,
                                           enable_physics=args.enable_physics, phrackify=args.phrack,
-                                          max_depth=args.max_depth, execution_timeout=args.execution_timeout)
+                                          max_depth=args.max_depth, execution_timeout=args.execution_timeout,
+                                          create_timeout=args.create_timeout)
 
                 try:
                     with open(args.graph, "w") as f:
@@ -219,7 +227,8 @@ def main():
                 report = mythril.fire_lasers(strategy=args.strategy, address=address,
                                              modules=[m.strip() for m in args.modules.strip().split(",")] if args.modules else [],
                                              verbose_report=args.verbose_report,
-                                             max_depth=args.max_depth, execution_timeout=args.execution_timeout)
+                                             max_depth=args.max_depth, execution_timeout=args.execution_timeout,
+                                             create_timeout=args.create_timeout)
                 outputs = {
                     'json': report.as_json(),
                     'text': report.as_text(),
@@ -241,7 +250,9 @@ def main():
             if not mythril.contracts:
                 exit_with_error(args.outform, "input files do not contain any valid contracts")
 
-            statespace = mythril.dump_statespace(strategy=args.strategy, contract=mythril.contracts[0], address=address, max_depth=args.max_depth)
+            statespace = mythril.dump_statespace(strategy=args.strategy, contract=mythril.contracts[0], address=address,
+                                                 max_depth=args.max_depth, execution_timeout=args.execution_timeout,
+                                                 create_timeout=args.create_timeout)
 
             try:
                 with open(args.statespace_json, "w") as f:

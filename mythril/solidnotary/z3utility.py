@@ -1,4 +1,4 @@
-from z3 import Solver, sat, eq, simplify, is_bool, is_true, is_false, Extract, BitVec
+from z3 import Solver, sat, eq, simplify, is_bool, is_true, is_false, Extract, BitVec, BitVecVal
 from copy import deepcopy
 
 """
@@ -35,6 +35,16 @@ def is_t_variable(var):
         return True
     else:
         return False
+
+def simplify_if_necessary(exp):
+    if type(exp) in [int, str, float, complex, bool]:
+        return exp
+    return simplify(exp)
+
+def sanitize_expr(exp):
+    if type(exp) in [int]:
+        return BitVecVal(exp, 256)
+    return exp
 
 
 def filter_for_t_variable_data(sym_vars):

@@ -36,7 +36,7 @@ def execute_contract_creation(laser_evm, contract_initialization_code, contract_
     open_states = laser_evm.open_states[:]
     del laser_evm.open_states[:]
 
-    new_account = laser_evm.world_state.create_account(0, concrete_storage=True, contract_name=contract_name)
+    new_account = laser_evm.world_state.create_account(0, concrete_storage=True, dynamic_loader=None, contract_name=contract_name)
 
     for open_world_state in open_states:
         transaction = ContractCreationTransaction(

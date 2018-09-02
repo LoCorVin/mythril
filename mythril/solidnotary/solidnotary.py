@@ -7,7 +7,7 @@ import mythril.laser.ethereum.util as helper
 from mythril.laser.ethereum.state import MachineState, GlobalState, Account, Environment, CalldataType
 from mythril.laser.ethereum.transaction import ContractCreationTransaction
 
-from .sn_utils import get_sourcecode_and_mapping
+from .sn_utils import get_sourcecode_and_mapping, flatten
 from .transactiontrace import TransactionTrace
 from .z3utility import are_z3_satisfiable
 from .calldata import get_minimal_constructor_param_encoding_len, abi_json_to_abi, get_calldata_name_map
@@ -15,7 +15,7 @@ from .coderewriter import write_code, get_code, replace_comments_with_whitespace
 from .codeparser import find_matching_closed_bracket, newlines, get_newlinetype
 from .stateprocessing import AnnotationProcessor
 from .annotation import annotation_kw, init_annotation, increase_rewritten_pos, comment_out_annotations, expand_rew
-from .ast_parser import get_contract_ast, get_function_asts, get_function_param_tuples, get_function_term_positions
+from .ast_parser import get_contract_ast, get_function_asts, get_function_param_tuples, get_function_term_positions, get_struct_map
 from .storage_members import extract_storage_map
 
 from z3 import BitVec,eq
@@ -223,7 +223,6 @@ class SolidNotary:
         self.annotation_map = {}
         self.annotated_contracts = []
 
-
         self.storage_map = {}
 
     def create_tmp_dir(self):
@@ -294,6 +293,9 @@ class SolidNotary:
 
 
     def build_annotated_contracts(self):
+
+        struct_map = get_struct_map(flatten([contract.solidity_files for contract in self.contracts]))
+
         for contract in self.contracts:
             if contract.name not in self.annotation_map:
                 continue
@@ -349,7 +351,7 @@ class SolidNotary:
                 annotation.set_annotation_contract(anotation_contract)
 
             write_code(sol_file.filename, origin_file_code)
-            self.storage_map[contract.name] = extract_storage_map(contract.ast)
+            self.storage_map[contract.name] = extract_storage_map(contract, struct_map)
 
 
     def get_traces_and_build_violations(self, contract):
@@ -460,7 +462,7 @@ class SolidNotary:
 def is_storage_primitive(storage): # Todo If concrete storage gives the value 0 to all unknown lookup values, trace combination has to consider that for the constructor
     if storage:
         for index, content in storage._storage.items():
-            if not eq(content, BitVec("storage_" + str(index), 256)): # Todo See and adapt storage indexing
+            if not eq(content, BitVec("storage[" + str(index) + "]", 256)): # Todo See and adapt storage indexing
                 return False
     return True
 

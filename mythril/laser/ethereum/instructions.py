@@ -5,7 +5,7 @@ from copy import copy, deepcopy
 import ethereum.opcodes as opcodes
 from ethereum import utils
 from z3 import BitVec, Extract, UDiv, simplify, Concat, ULT, UGT, BitVecNumRef, Not, \
-    is_false, is_expr, ExprRef
+    is_false, is_expr, ExprRef, URem, SRem
 from z3 import BitVecVal, If, BoolRef
 
 import mythril.laser.ethereum.util as helper
@@ -13,7 +13,7 @@ from mythril.laser.ethereum import util
 from mythril.laser.ethereum.call import get_call_parameters
 from mythril.laser.ethereum.state import GlobalState, MachineState, Environment, CalldataType
 import mythril.laser.ethereum.natives as natives
-from mythril.laser.ethereum.transaction import MessageCallTransaction, TransactionEndSignal, TransactionStartSignal
+from mythril.laser.ethereum.transaction import MessageCallTransaction, TransactionEndSignal, TransactionStartSignal, ContractCreationTransaction
 
 TT256 = 2 ** 256
 TT256M1 = 2 ** 256 - 1
@@ -53,8 +53,6 @@ class Instruction:
         # Generalize some ops
         logging.debug("Evaluating {}".format(self.op_code))
         op = self.op_code.lower()
-        if self.op_code.startswith("MOD"):
-            print()
         if self.op_code.startswith("PUSH"):
             op = "push"
         elif self.op_code.startswith("DUP"):
@@ -187,34 +185,47 @@ class Instruction:
 
     @instruction
     def div_(self, global_state):
-        global_state.mstate.stack.append(
-            UDiv(util.pop_bitvec(global_state.mstate), util.pop_bitvec(global_state.mstate)))
+        op0, op1 = util.pop_bitvec(global_state.mstate), util.pop_bitvec(global_state.mstate)
+        if op1 == 0:
+            global_state.mstate.stack.append(BitVecVal(0, 256))
+        else:
+            global_state.mstate.stack.append(UDiv(op0, op1))
         return [global_state]
 
     @instruction
     def sdiv_(self, global_state):
         s0, s1 = util.pop_bitvec(global_state.mstate), util.pop_bitvec(global_state.mstate)
-        global_state.mstate.stack.append(s0 / s1)
+        if s1 == 0:
+            global_state.mstate.stack.append(BitVecVal(0, 256))
+        else:
+            global_state.mstate.stack.append(s0 / s1)
+        return [global_state]
+
+    @instruction
+    def mod_(self, global_state):
+        s0, s1 = util.pop_bitvec(global_state.mstate), util.pop_bitvec(global_state.mstate)
+        global_state.mstate.stack.append(0 if s1 == 0 else URem(s0, s1))
         return [global_state]
 
     @instruction
     def smod_(self, global_state):
         s0, s1 = util.pop_bitvec(global_state.mstate), util.pop_bitvec(global_state.mstate)
-        global_state.mstate.stack.append(0 if s1 == 0 else s0 % s1)
+        global_state.mstate.stack.append(0 if s1 == 0 else SRem(s0, s1))
         return [global_state]
 
     @instruction
     def addmod_(self, global_state):
         s0, s1, s2 = util.pop_bitvec(global_state.mstate), util.pop_bitvec(global_state.mstate), util.pop_bitvec(
             global_state.mstate)
-        global_state.mstate.stack.append((s0 + s1) % s2)
+        global_state.mstate.stack.append(URem(URem(s0, s2) + URem(s1, s2), s2))
         return [global_state]
 
     @instruction
     def mulmod_(self, global_state):
         s0, s1, s2 = util.pop_bitvec(global_state.mstate), util.pop_bitvec(global_state.mstate), util.pop_bitvec(
             global_state.mstate)
-        global_state.mstate.stack.append((s0 * s1) % s2 if s2 else 0)
+        global_state.mstate.stack.append(URem(URem(s0, s2) * URem(s1, s2), s2))
+        return [global_state]
 
     @instruction
     def exp_(self, global_state):
@@ -230,7 +241,7 @@ class Instruction:
             else:
                 state.stack.append(base << (exponent - 1))
         else:
-            state.stack.append(base)
+            state.stack.append(BitVecVal(base.as_long() ** exponent.as_long(), 256))
         return [global_state]
 
     @instruction
@@ -552,6 +563,13 @@ class Instruction:
 
         bytecode = global_state.environment.code.bytecode
 
+        if concrete_size == 0 and isinstance(global_state.current_transaction, ContractCreationTransaction):
+            if concrete_code_offset >= len(global_state.environment.code.bytecode) // 2:
+                global_state.mstate.mem_extend(concrete_memory_offset, 1)
+                global_state.mstate.memory[concrete_memory_offset] = \
+                    BitVec("code({})".format(global_state.environment.active_account.contract_name), 256)
+                return [global_state]
+
         for i in range(concrete_size):
             if 2 * (concrete_code_offset + i + 1) <= len(bytecode):
                 global_state.mstate.memory[concrete_memory_offset + i] =\
@@ -742,6 +760,9 @@ class Instruction:
     def sstore_(self, global_state):
         state = global_state.mstate
         index, value = state.stack.pop(), state.stack.pop()
+
+        # print(simplify(index))
+        # print(simplify(value))
 
         logging.debug("Write to storage[" + str(index) + "]")
 

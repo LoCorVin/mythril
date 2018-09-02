@@ -86,3 +86,14 @@ def get_function_param_tuples(f_ast):
 
 def get_contract_storage_members(contract_ast):
     return get_all_nested_dicts_with_kv_pairs(contract_ast, 'stateVariable', True)
+
+def get_struct_map(files):
+    structs = {}
+    for file in files:
+        for struct in get_all_nested_dicts_with_kv_pairs(file.ast, 'name', 'StructDefinition'):
+            struct_abs_name = struct['attributes']['canonicalName']
+            if struct_abs_name not in structs:
+                structs[struct_abs_name] = [variable['attributes']['type'] for variable in get_all_nested_dicts_with_kv_pairs(struct, 'name', 'VariableDeclaration')]
+    return structs
+
+
