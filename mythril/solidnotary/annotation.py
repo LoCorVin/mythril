@@ -1,25 +1,33 @@
 from enum import Enum
-from re import match
+from re import match, finditer, escape, sub
 from functools import reduce
 from .transactiontrace import TransactionTrace
 from .codeparser import find_matching_closed_bracket, get_pos_line_col
 from .coderewriter import expand_rew, after_implicit_block, get_exp_block_brack_pos, get_editor_indexed_rewriting
+from mythril.laser.ethereum.transaction.transaction_models import ContractCreationTransaction
 from .z3utility import get_function_from_constraint
 
 
 
 ANNOTATION_START = "@"
-ANNOTATION_START_REPLACEMENT = "//@"
-annotation_kw = ["check", "invariant", "construction", "ethersink", "ethersource"]
-
+ANNOTATION_START_REPLACEMENT_NEW = "/*@"
+ANNOTATION_STOP = "*/"
+annotation_kw = ["check", "invariant", "set_restricted", "ethersink", "ethersource"]
 
 
 def comment_out_annotations(filename):
     with open(filename, 'r') as file:
         filedata = file.read()
     for kw in annotation_kw:
-        filedata = filedata.replace(ANNOTATION_START + kw, ANNOTATION_START_REPLACEMENT + kw)
+        kw_idxs = reversed([kw_idx for kw_idx in finditer(escape(ANNOTATION_START + kw), filedata)])
+        for kw_idx in kw_idxs:
+            end_idx = kw_idx.end()
+            if filedata[end_idx] == "(":
+                end_idx = find_matching_closed_bracket(filedata, end_idx) + 1
 
+            filedata = filedata[:kw_idx.start()] + "/*" + filedata[kw_idx.start():end_idx] + "*/" + filedata[end_idx:]
+
+    print(filedata)
     with open(filename, 'w') as file:
         file.write(filedata)
 
@@ -28,13 +36,19 @@ def recomment_annotations(filename):
         filedata = file.read()
 
     for kw in annotation_kw:
-        filedata = filedata.replace(ANNOTATION_START_REPLACEMENT + kw, ANNOTATION_START + kw)
+        kw_idxs = reversed([kw_idx for kw_idx in finditer(escape(ANNOTATION_START + kw), filedata)])
+        for kw_idx in kw_idxs:
+            end_idx = kw_idx.end()
+            if filedata[end_idx] == "(":
+                end_idx = find_matching_closed_bracket(filedata, end_idx) + 1
+
+            filedata = filedata[:kw_idx.start()] + filedata[kw_idx.start() + 2:end_idx] + filedata[end_idx+2:]
 
     with open(filename, 'w') as file:
         file.write(filedata)
 
-def get_origin_pos_line_col(text):
-    return get_pos_line_col(text.replace(ANNOTATION_START_REPLACEMENT, ANNOTATION_START))
+def get_origin_pos_line_col(text): # Todo attentions, new commenting out
+    return get_pos_line_col(text.replace(ANNOTATION_START_REPLACEMENT_NEW, ANNOTATION_START))
 
 def get_annotation_content(code, content_start):
     match_annotation_start = match(r'\s*\(', code[content_start:])
@@ -44,6 +58,32 @@ def get_annotation_content(code, content_start):
     closed_idx = find_matching_closed_bracket(code, content_start + len(m_string) - 1)
     return code[(content_start + len(m_string)):closed_idx], len(m_string)
 
+def get_annotated_members(contract, code, start, annotation_length):
+    preceded_member = None
+    for member in contract.storage_members:
+        if start > member.src[0] - contract.contract_range[0] and start <= member.src[0] + member.src[1] - contract.contract_range[0]:
+            return [member] # inside_member
+        elif start > member.src[0] - contract.contract_range[0] and (not preceded_member or member.src[0] > preceded_member.src[0]):
+            preceded_member = member
+
+    semic_idx = code[:start].rfind(';') if ';' in code[:start] else 0
+    preceding_nwl_idx = code[:start].rfind('\n') if '\n' in code[:start] else 0
+
+
+    if preceded_member.src[0] - contract.contract_range[0] > semic_idx:
+        return [preceded_member]
+
+    if not preceded_member or preceded_member.src[0] - contract.contract_range[0] + preceded_member.src[1] < preceding_nwl_idx:
+        raise SyntaxError("Member Annotation has to be in the same line as parts of a member definition")
+
+    sameline_members = []
+    for member in contract.storage_members:
+        if member.src[0] - contract.contract_range[0] > preceding_nwl_idx and member.src[0] - contract.contract_range[0] < start:
+            sameline_members.append(member)
+
+    return sameline_members
+
+
 
 def init_annotation(contract, code, head, kw, start, end):
     if kw == "check":
@@ -52,8 +92,10 @@ def init_annotation(contract, code, head, kw, start, end):
     elif kw == "invariant":
         content, content_prefix = get_annotation_content(code, start + len(head))
         return InvariantAnnotation(contract, code[start:(end + content_prefix)] + content + ")", get_pos_line_col(code[:start]), get_origin_pos_line_col(code[:start]))
-    elif kw == "construction":
-        pass
+    elif kw == "set_restricted":
+        content, content_prefix = get_annotation_content(code, start + len(head))
+        member_vars = get_annotated_members(contract, code, start, len(head + content) + 2)
+        return SetRestrictionAnnotation(contract, code[start:(end + content_prefix)] + content + ")", content, member_vars)
 
     elif kw == "ethersink":
         pass
@@ -193,7 +235,7 @@ class Annotation:
 
     def set_violations(self, violations, src_mapping, contract): # Ads new violations to this annotation and sets the status, can be called multiple times
         self.violations.extend([Violation(violation, src_mapping, contract) for violation in violations])
-        # Todo Some violations might already be fulfilled without refering to storage(dependencies of other contracts)
+        # Todo Some violations might already be fulfilled without refering to storage(dependencies of other transactions)
         # Todo and thus not need transaction chaining verification
         self.status = Status.HSINGLE if self.violations else Status.HOLDS
 
@@ -209,7 +251,7 @@ class Annotation:
         return []
 
     def build_violations(self, sym_myth):
-        raise NotImplementedError("Abstract function of Annotation abstraction")
+        pass
 
     def trans_violations_check(self, sym_tran, sym_con): # Or should i get the predfiltered transaction or even builded chains here
         raise NotImplementedError("Abstract function of Annotation abstraction")
@@ -282,6 +324,8 @@ class InvariantAnnotation(Annotation):
     def rewrite_code(self, code, contract_range): # In the default case it returns '' empty string, to delete it before handing it over to the compiler
         assertion_text = "assert(" + self.content + ");"
         for function in self.functions:
+            if function.constant == True: # Dont' build invariant assertions for functions that do not change storage and thus do not change invariants
+                continue
             for term_pos in function.terminating_pos:
 
                 assertion_rew = expand_rew(code, (assertion_text, term_pos[0]))
@@ -324,11 +368,70 @@ class InvariantAnnotation(Annotation):
 
 
     def build_violations(self, sym_myth):
-        raise NotImplementedError("Abstract function of Annotation abstraction")
+        pass
 
     def trans_violations_check(self, sym_tran, sym_con): # Or should i get the predfiltered transaction or even builded chains here
         raise NotImplementedError("Abstract function of Annotation abstraction")
 
     def get_violations_description(self): # Returns a tuple or list of tuples with description, assoviated line and string to highlight.
         raise NotImplementedError("Abstract function of Annotation abstraction")
+
+class SetRestrictionAnnotation(Annotation):
+
+    # Any function name, or signature, 'constructor' or contract name for constructor, empty content or '()' as parameter
+
+    def __init__(self, contract, annotation_str, content, member_variables):
+        self.restricted_f = []
+        self.storage_slot_map = {}
+        self.contract = contract
+        for restriction in content.split(","):
+            restriction = sub('\s','',restriction)
+            self.restricted_f.append(restriction)
+
+        for m_var in member_variables:
+            self.storage_slot_map[m_var.name] = contract.storage_map[m_var.name]
+
+        # Todo get all storage slots from storage map
+        Annotation.__init__(self, annotation_str)
+
+    def rewrite_code(self, code, contract_range):
+        return []
+
+    def build_violations(self, sym_myth):
+        violations = []
+        for _, node in sym_myth.nodes.items():
+            for state in node.states:
+                if state.instruction['opcode'] == "SSTORE":
+                    is_fallback = False
+                    in_constructor = isinstance(state.current_transaction, ContractCreationTransaction)
+                    if not in_constructor:
+                        function = get_function_from_constraint(self.contract, state.mstate.constraints)
+                        if function:
+                            print(function.name)
+                        else:
+                            try:
+                                function = list(filter(lambda f: f.name == "", self.contract.functions))[0]
+                            except IndexError:
+                                raise SyntaxError("Targeted unexisting fallback function")
+                            is_fallback = True
+                        # Skipp if function is somehow mentioned in the restricted list
+                        if function.name in self.restricted_f or in_constructor and ("constructor" in self.restricted_f
+                            or self.contract.name in self.restricted_f or any([restriction.startswith(self.contract.name + "(") for restriction in self.restricted_f]))\
+                            or function.signature in self.restricted_f:
+                            break
+                    for member_name, storage_slots in self.storage_slot_map.items():
+                        for storage_slot in storage_slots:
+                            if storage_slot.may_write_to(state.mstate.stack[-1], state.mstate.stack[-2], state.environment.active_account.storage._storage, state.mstate.constraints):
+                                # Todo Add more information to the single violation, e.g. here, which variable is or may be overwritten
+                                print(storage_slot)
+                                 # self.set_violations(...)
+
+
+    def trans_violations_check(self, sym_tran, sym_con): # Or should i get the predfiltered transaction or even builded chains here
+        raise NotImplementedError("Abstract function of Annotation abstraction")
+
+    def get_violations_description(self): # Returns a tuple or list of tuples with description, assoviated line and string to highlight.
+        raise NotImplementedError("Abstract function of Annotation abstraction")
+
+
 

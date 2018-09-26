@@ -54,6 +54,7 @@ def get_function_asts(contract_ast):
     return get_all_nested_dicts_with_kv_pairs(contract_ast, "name", "FunctionDefinition")
 
 def get_function_term_positions(f_ast):
+    # Todo ignore functions that definitely do not change anything for @invariant
     terminating_pos = []
     returns = get_all_nested_dicts_with_kv_pairs(f_ast, "name", "Return")
     for ret in returns:
@@ -85,7 +86,8 @@ def get_function_param_tuples(f_ast):
     return param_tpls
 
 def get_contract_storage_members(contract_ast):
-    return get_all_nested_dicts_with_kv_pairs(contract_ast, 'stateVariable', True)
+    var_defs = get_all_nested_dicts_with_kv_pairs(contract_ast, 'name', 'VariableDeclaration')
+    return list(filter(lambda vdef: vdef['attributes']['stateVariable'],var_defs))
 
 def get_struct_map(files):
     structs = {}

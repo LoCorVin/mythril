@@ -32,6 +32,7 @@ tmp_dir_name = project_name + "_tmp"
 
 laser_strategy = "dfs"
 
+
 class SolidityFunction:
 
     def __init__(self, f_ast, calldata_name_map):
@@ -111,20 +112,7 @@ def get_containing_file(contract):
             break
     return containing_file
 
-def get_function_by_name(contract, name):
-    function_list = []
-    for function in contract.functions:
-        if function.name == name:
-            function_list.append(function)
-    return function_list
 
-def get_function_by_hash(contract, hash):
-    for function in contract.functions:
-        if function.hash == hash:
-            return function
-
-def get_function_by_inthash(contract, value):
-    return get_function_by_hash(contract, value.hash())
 
 
 """
@@ -174,44 +162,46 @@ def get_contract_code(contract):
 """
 
 
-def parse_annotation_info(filedata):
-    annotations = []
-    for inv in findall(r'//@invariant\<([^\)]+)\>;(\r\n|\r|\n)', filedata):
-        match_inv = "//@invariant<" + inv[0] + ">;"
-        for pos in find_all(filedata, match_inv + inv[1]):
-            line = count_elements(filedata[:pos], newlines) + 1
-            col = pos - max(map(lambda x: filedata[:pos].rfind(x), newlines))
-            annotations.append((pos, line, col, '//invariant(', inv[0], ")", inv[1]))
-    return set(annotations)
+#def parse_annotation_info(filedata):
+#    annotations = []
+#    for inv in findall(r'/*@invariant\<([^\)]+)\>;(\r\n|\r|\n)', filedata):
+#        match_inv = "/*@invariant<" + inv[0] + ">;"
+#        for pos in find_all(filedata, match_inv + inv[1]):
+#            line = count_elements(filedata[:pos], newlines) + 1
+#            col = pos - max(map(lambda x: filedata[:pos].rfind(x), newlines))
+#            annotations.append((pos, line, col, '//invariant(', inv[0], ")", inv[1]))
+#    return set(annotations)
 
-def parse_annotation_info(code):
-    annotations = []
-    for kw in annotation_kw:
-        annot_iterator = finditer(r'//@' + escape(kw), code)
-        annot_iter = next(annot_iterator, None)
-        while annot_iter:
-            annotation = init_annotation(code, annot_iter.group(), kw, annot_iter.start(), annot_iter.end())
-            annotations.append(annotation)
-            annot_iter = next(annot_iterator, None)
+#def parse_annotation_info(code):
+#    annotations = []
+#    for kw in annotation_kw:
+#        annot_iterator = finditer(r'/*@' + escape(kw), code)
+#        annot_iter = next(annot_iterator, None)
+#        while annot_iter:
+#            print(annot_iter.group())
+#            print(code[annot_iter.start():annot_iter.end()])
+#            annotation = init_annotation(code, annot_iter.group(), kw, annot_iter.start(), annot_iter.end())
+#            annotations.append(annotation)
+#            annot_iter = next(annot_iterator, None)
 
 
-def read_write_file(filename):
-    with open(filename, 'r') as file:
-        filedata = file.read()
-
-    annotations = parse_annotation_info(filedata)
-
-    annotations = sorted(list(annotations), key=lambda x: x[0], reverse=True)
-    for annotation in annotations:
-        filedata = replace_index(filedata, annotation[3] + annotation[4] + annotation[5] + annotation[6], "assert("
-                                 + annotation[4] + ");" + annotation[6], annotation[0])
+#def read_write_file(filename):
+#    with open(filename, 'r') as file:
+#        filedata = file.read()
+#
+#    annotations = parse_annotation_info(filedata)
+#
+#    annotations = sorted(list(annotations), key=lambda x: x[0], reverse=True)
+#    for annotation in annotations:
+#        filedata = replace_index(filedata, annotation[3] + annotation[4] + annotation[5] + annotation[6], "assert("
+#                                 + annotation[4] + ");" + annotation[6], annotation[0])
     # Replace the target string
     # filedata = filedata.replace('@ensure', '@invariant')
     # filedata = filedata.replace('@invariant', '@ensure')
 
-    with open(filename, 'w') as file:
-        file.write(filedata)
-    return annotations
+#    with open(filename, 'w') as file:
+#        file.write(filedata)
+#    return annotations
 
 class SolidNotary:
 
@@ -266,12 +256,18 @@ class SolidNotary:
 
 
     def parse_annotations(self):
+        struct_map = get_struct_map(flatten([contract.solidity_files for contract in self.contracts]))
         # Todo from which contract to parse?
         for contract in self.contracts:
+
+            # Todo Saving Storage Mapping with mappings in contract might not be necessary
+            self.storage_map[contract.name] = extract_storage_map(contract, struct_map)
+            contract.storage_map = self.storage_map[contract.name]
 
 
             code = get_containing_file(contract).data
             contract_range = find_contract_idx_range(contract)
+            contract.contract_range = contract_range
             code = code[contract_range[0]:contract_range[2]]
 
 
@@ -280,21 +276,21 @@ class SolidNotary:
                 function.terminating_pos = list(map(lambda pos: (pos[0] - contract_range[0], pos[1]), function.terminating_pos))
 
             for kw in annotation_kw:
-                annot_iterator = finditer(r'//@' + escape(kw), code)
+                annot_iterator = finditer(r'/*@' + escape(kw), code)
                 annot_iter = next(annot_iterator, None)
                 if annot_iter and contract.name not in self.annotation_map:
                     self.annotation_map[contract.name] = []
                 while annot_iter:
+                    
                     annotation = init_annotation(contract, code, annot_iter.group(), kw, annot_iter.start(), annot_iter.end())
-
-                    self.annotation_map[contract.name].append(annotation)
+                    if annotation:
+                        self.annotation_map[contract.name].append(annotation)
                     annot_iter = next(annot_iterator, None)
 
 
 
     def build_annotated_contracts(self):
 
-        struct_map = get_struct_map(flatten([contract.solidity_files for contract in self.contracts]))
 
         for contract in self.contracts:
             if contract.name not in self.annotation_map:
@@ -351,7 +347,7 @@ class SolidNotary:
                 annotation.set_annotation_contract(anotation_contract)
 
             write_code(sol_file.filename, origin_file_code)
-            self.storage_map[contract.name] = extract_storage_map(contract, struct_map)
+
 
 
     def get_traces_and_build_violations(self, contract):
@@ -415,6 +411,9 @@ class SolidNotary:
             annotation = create_ignore_list[ign_idx][4]
             mapping = get_sourcecode_and_mapping(create_ignore_list[ign_idx][2]['address'], contract.creation_disassembly.instruction_list, contract.creation_mappings)
             annotation.set_violations(annotationsProcessor.create_violations[ign_idx], mapping, contract)
+
+        for annotation in self.annotation_map[contract.name]:
+            annotation.build_violations(sym_transactions)
 
 
         # Build traces from the regular annotation ignoring global states
@@ -481,6 +480,7 @@ def get_traces(statespace, contract):
         for state in node.states:
             state_count += 1
             instruction = state.get_current_instruction()
+            # Todo should I ignore certain functions: non public or external functions ???
             if instruction['opcode'] in ["STOP", "RETURN"]:
                 storage = state.environment.active_account.storage
                 if storage and not is_storage_primitive(storage) and are_z3_satisfiable(state.mstate.constraints):

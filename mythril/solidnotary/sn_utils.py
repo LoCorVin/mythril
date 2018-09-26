@@ -1,5 +1,6 @@
 import mythril.laser.ethereum.util as helper
 from mythril.ether.soliditycontract import SourceCodeInfo
+from z3 import eq, Extract, BitVec
 
 
 def get_source_information(contract, instruction_list, mappings, address):
@@ -51,4 +52,28 @@ def flatten(list_to_flatten):
     return [item for sublist in list_to_flatten for item in sublist]
 
 
+def get_function_by_name(contract, name):
+    function_list = []
+    for function in contract.functions:
+        if function.name == name:
+            function_list.append(function)
+    return function_list
+
+def get_function_by_hash(contract, hash):
+    for function in contract.functions:
+        if function.hash == hash:
+            return function
+
+def get_function_by_inthash(contract, value):
+    return get_function_by_hash(contract, value.hash())
+
+def get_function_from_constraints(contract, constraints):
+    # Todo first we could search for constraints that could be a restriction to the function hash
+    # Todo a calldata length > 4 constraint could be searched for to
+    for function in contract.functions:
+        function_constraint = Extract(255,224, BitVec("calldata_" + contract.name+ "[0]", 256)) == int(function.hash, 16)
+        for constraint in constraints:
+            if eq(constraint, function_constraint):
+                return function
+    return None
 
