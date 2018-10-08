@@ -1,7 +1,7 @@
 from z3 import BitVec
 import logging
 from mythril.laser.ethereum.state import WorldState
-from mythril.solidnotary.debugc import printd
+from mythril.annotary.debugc import printd
 from mythril.laser.ethereum.transaction import TransactionStartSignal, TransactionEndSignal, \
     ContractCreationTransaction
 from mythril.laser.ethereum.instructions import Instruction

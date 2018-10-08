@@ -1,7 +1,7 @@
 
 import logging
-from mythril.solidnotary.calldata import get_minimal_constructor_param_encoding_len, abi_json_to_abi
-from laser.ethereum.svm import GlobalState, Account, Environment, MachineState, CalldataType
+from mythril.annotary.calldata import get_minimal_constructor_param_encoding_len, abi_json_to_abi
+from mythril.laser.ethereum.svm import GlobalState, Account, Environment, MachineState, CalldataType
 from z3 import BitVec
 from mythril.analysis.symbolic import SymExecWrapper
 from mythril.support.loader import DynLoader
@@ -9,7 +9,7 @@ from copy import deepcopy
 from mythril.disassembler.disassembly import Disassembly
 from time import process_time
 
-from mythril.solidnotary.solidnotary import get_transaction_traces, get_construction_traces
+from .annotary import get_transaction_traces, get_construction_traces
 
 
 def get_constr_glbstate(contract, address):

@@ -1,6 +1,34 @@
 import mythril.laser.ethereum.util as helper
+from mythril.laser.ethereum.transaction import ContractCreationTransaction
 from mythril.ether.soliditycontract import SourceCodeInfo
 from z3 import eq, Extract, BitVec
+
+def get_si_from_state(contract, address, state):
+
+    if isinstance(state.current_transaction, ContractCreationTransaction ):
+        instruction_list = contract.creation_disassembly.instruction_list
+        mappings = contract.creation_mappings
+    else:
+        instruction_list = contract.disassembly.instruction_list
+        mappings = contract.mappings
+
+
+    index = helper.get_instruction_index(instruction_list, address)
+
+    if index >= len(mappings):
+        return None
+
+    solidity_file = contract.solidity_files[mappings[index].solidity_file_idx]
+
+    filename = solidity_file.filename
+
+    offset = mappings[index].offset
+    length = mappings[index].length
+
+    code = solidity_file.data[offset:offset + length]
+    lineno = mappings[index].lineno
+
+    return SourceCodeInfo(filename, lineno, code), mappings[index]
 
 
 def get_source_information(contract, instruction_list, mappings, address):
@@ -29,6 +57,7 @@ def get_sourcecode_and_mapping(address, instr_list, mappings):
     else:
         return None
 
+
 def get_named_instruction(instruction_list, opcode):
     instructions = []
 
@@ -37,6 +66,7 @@ def get_named_instruction(instruction_list, opcode):
             instructions.append(instr)
 
     return instructions
+
 
 def get_named_instructions_with_mappings(instruction_list, mappings, opcode):
     instructions_and_mappings = []

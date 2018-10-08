@@ -1,8 +1,27 @@
 from .ast_parser import get_contract_storage_members
 from functools import reduce
+from .z3utility import are_z3_satisfiable
+from z3 import eq, BitVecVal, BitVec, Extract, Not
+from mythril.laser.ethereum.util import get_concrete_int
 
 type_alias = {"address": "int160", "bool": "int8", "byte": "bytes1", "ufixed": "ufixed128x18", "fixed": "fixed128x18",
               "int": "int256", "uint":"uint256"}
+
+'''
+    Copied and modified from laser evm, must have the same behaviour
+'''
+def get_storage_slot(index, storage):
+        try:
+            index = get_concrete_int(index)
+        except AttributeError:
+            index = str(index)
+
+        try:
+            data = storage[index]
+        except KeyError:
+            data = BitVec("storage[" + str(index) + "]", 256)
+
+        return data
 
 
 class SolidityMember:
@@ -24,6 +43,7 @@ class StorageSlot:
     def may_write_to(self, z3_index, z3_value, storage, constraint_list):
         raise NotImplementedError("Unimplemented Function of Abstract class")
 
+
     def may_read_from(self, z3_index, z3_value, storage, constraint_list):
         raise NotImplementedError("Unimplemented Function of Abstract class")
 
@@ -35,7 +55,45 @@ class ConcretSlot(StorageSlot):
         self.bitlength = bitlength
 
     def may_write_to(self, z3_index, z3_value, storage, constraint_list):
-        pass
+        same_slot = False
+
+        # z3-index directly pointing to this slot
+        concret_index = BitVecVal(self.slot_counter, 256)
+
+        # Compare expression equivalence
+        if eq(concret_index, z3_index):
+            same_slot = True
+
+        # If not structurally equivalent, check if there is an assignment that allows them to be equivalent
+        if not same_slot and not are_z3_satisfiable(constraint_list + [z3_index == self.slot_counter]):
+            return False
+
+        index_str = str(z3_index)
+        # Rule out keccak symbolic variable as the function prevents someone from arbitrarily controlling the index
+        if len(z3_index.children()) < 2 and index_str.startswith("keccak"):
+            return False # Todo Here I might do something more elaborate if I see that it does actually not solve critical writings
+
+        # If the slot is or may be the same and the slot we currently analyze is the same, we found a possible write
+        if self.bitlength == 256:
+            return True
+
+        # If not, the slot is still written in its entirety but the observed chunk is loaded and overwritten by itself
+
+        chunk_writing = Extract(self.bit_counter + self.bitlength, self.bit_counter, z3_value)
+
+        chunk_content = Extract(self.bit_counter + self.bitlength, self.bit_counter,
+                                get_storage_slot(BitVecVal(self.slot_counter, 256), storage))
+
+        # if the current content of the observed chunk and the respective chunk of the written value can be different
+        # like by a different variable assignment, then we found it
+        if are_z3_satisfiable(constraint_list + [Not(chunk_content == chunk_writing)]):
+            return True
+
+        # For the 256-bit chunks the last step should not be necessary, but a compiler could generate some code that
+        # overwrites a slot content with itself. This function would have a false positive in that case.
+
+        return False
+
 
     def may_read_from(self, z3_index, z3_value, storage, constraint_list):
         pass
@@ -46,6 +104,7 @@ class MappingSlot(StorageSlot):
         self.slot_counter = slot_counter
 
     def may_write_to(self, z3_index, z3_value, storage, constraint_list):
+        # write keccak(...) check if it contains the slot keccak needs the
         pass
 
     def may_read_from(self, z3_index, z3_value, storage, constraint_list):
@@ -58,6 +117,7 @@ class ArraySlot(StorageSlot):
         self.slot_counter = slot_counter
 
     def may_write_to(self, z3_index, z3_value, storage, constraint_list):
+        # write keccak(...) + index consider constraint
         pass
 
     def may_read_from(self, z3_index, z3_value, storage, constraint_list):

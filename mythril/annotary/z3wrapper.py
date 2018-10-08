@@ -1,4 +1,4 @@
-from mythril.solidnotary.z3utility import extract_sym_names, filter_for_t_variable_data
+from .z3utility import extract_sym_names, filter_for_t_variable_data
 from z3 import substitute, BitVec, simplify
 from .sn_utils import flatten
 

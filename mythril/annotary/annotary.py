@@ -25,8 +25,9 @@ from re import finditer, escape
 from shutil import rmtree, copy
 from re import findall, DOTALL
 from functools import reduce
+from .debugc import printd
 
-project_name = "solidnotary"
+project_name = "annotary"
 
 tmp_dir_name = project_name + "_tmp"
 
@@ -203,7 +204,7 @@ def get_contract_code(contract):
 #        file.write(filedata)
 #    return annotations
 
-class SolidNotary:
+class Annotary:
 
     def __init__(self, solc_args):
         self.solc_args = solc_args
@@ -334,9 +335,9 @@ class SolidNotary:
             rew_file_code = contract_prefix + rew_contract_code + contract_suffix
 
             # in line should be done for every annotation later
-            print("----")
-            print(rew_file_code)
-            print("----")
+            #printd("----")
+            #printd(rew_file_code)
+            #printd("----")
             write_code(sol_file.filename, rew_file_code)
 
             anotation_contract = SolidityContract(sol_file.filename, contract.name, solc_args=self.solc_args)
@@ -390,15 +391,15 @@ class SolidNotary:
                                                    contract.disassembly.instruction_list, create_ignore_list, trans_ignore_list, contract)
 
         # Symbolic execution of construction and transactions
-        print("Constructor and Transaction")
+        printd("Constructor and Transaction")
 
         constr_calldata_len = get_minimal_constructor_param_encoding_len(abi_json_to_abi(contract.abi))
         sym_code_extension = SymbolicCodeExtension("calldata", contract.name, constr_calldata_len)
 
         sym_transactions = SymExecWrapper(contract, self.address, laser_strategy, dynloader, max_depth=self.max_depth,
                                           prepostprocessor=annotationsProcessor, code_extension=sym_code_extension) # Todo Mix the annotation Processors or mix ignore listst
-        print("Construction Violations: " + str(len(reduce(lambda x, y: x + y, annotationsProcessor.create_violations, []))))
-        print("Transaction Violations: " + str(len(reduce(lambda x, y: x + y, annotationsProcessor.trans_violations, []))))
+        printd("Construction Violations: " + str(len(reduce(lambda x, y: x + y, annotationsProcessor.create_violations, []))))
+        printd("Transaction Violations: " + str(len(reduce(lambda x, y: x + y, annotationsProcessor.trans_violations, []))))
 
         # Add found violations to the annotations they violated
         # Todo Extract violations from only one symbolic execution
@@ -466,7 +467,7 @@ def is_storage_primitive(storage): # Todo If concrete storage gives the value 0 
     return True
 
 def get_traces(statespace, contract):
-    print("get_traces")
+    printd("get_traces")
     elim_t_t = 0
     elim_c_t = 0
     trans_traces = []
@@ -502,20 +503,20 @@ def get_traces(statespace, contract):
                         else:
                             trans_traces.append(trace)
                     else:
-                        print("Skipped mapping")
+                        printd("Skipped mapping")
                 else:
                     if isinstance(state, ContractCreationTransaction):
                         elim_c_t += 1
                     else:
                         elim_t_t += 1
-    print("Construction traces: " + str(len(constr_traces)) + " eliminated: " + str(elim_c_t))
-    print("Transaction traces: " + str(len(trans_traces)) + " eliminated: " + str(elim_t_t))
-    print("states: " + str(state_count))
-    print("nodes: " + str(node_count))
+    printd("Construction traces: " + str(len(constr_traces)) + " eliminated: " + str(elim_c_t))
+    printd("Transaction traces: " + str(len(trans_traces)) + " eliminated: " + str(elim_t_t))
+    printd("states: " + str(state_count))
+    printd("nodes: " + str(node_count))
     return constr_traces, trans_traces
 
 def get_construction_traces(statespace):
-    print("get_constructor_traces")
+    printd("get_constructor_traces")
     num_elimi_traces= 0
     traces = []
 
@@ -529,7 +530,7 @@ def get_construction_traces(statespace):
                     traces.append(TransactionTrace(state.environment.active_account.storage, state.mstate.constraints))
                 else:
                     num_elimi_traces += 1
-    print("Construction traces: " + str(len(traces)) + " eliminated: " + str(num_elimi_traces))
+    printd("Construction traces: " + str(len(traces)) + " eliminated: " + str(num_elimi_traces))
     return traces
 
 def get_constr_glbstate(contract, address):

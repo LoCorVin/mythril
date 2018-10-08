@@ -2,10 +2,11 @@ from z3 import *
 from .z3utility import get_function_from_constraint, simplify_constraints_individually, sanitize_expr
 from copy import deepcopy
 from .sn_utils import flatten
+from .debugc import printd
 import re
-from mythril.solidnotary.z3utility import are_satisfiable, simplify_constraints, simplify_z3_constraints, \
+from mythril.annotary.z3utility import are_satisfiable, simplify_constraints, simplify_z3_constraints, \
     extract_sym_names, filter_for_t_variable_data
-from mythril.solidnotary.z3wrapper import Slot, Constraint
+from mythril.annotary.z3wrapper import Slot, Constraint
 
 simp_and_sat = False
 
@@ -70,11 +71,11 @@ class TransactionTrace:
                 'tran_constraints': str([const.constraint for const in self.tran_constraints])}
 
     def pp_trace(self):
-        print()
-        print("Trace lvl: {}".format(self.lvl))
-        print("Storage: {}".format({k: str(v.slot).replace("\n", " ") for k, v in self.storage.items()}))
-        print("Tran_constraints: {}".format(list(map(lambda x: str(x.constraint).replace("\n", " "), self.tran_constraints))))
-        print()
+        printd()
+        printd("Trace lvl: {}".format(self.lvl))
+        printd("Storage: {}".format({k: str(v.slot).replace("\n", " ") for k, v in self.storage.items()}))
+        printd("Tran_constraints: {}".format(list(map(lambda x: str(x.constraint).replace("\n", " "), self.tran_constraints))))
+        printd()
 
     def add_transaction_idx(self, offset):# Delete if no error shows
 
@@ -129,7 +130,7 @@ class TransactionTrace:
             sym_names.extend(vs_sym_names)
             if vs_sym_names:
                 sum += 1
-        print("Extracted sym storage: " + str(sum) + " " + str( float(len(self.storage) - sum) / len(self.storage)))
+        printd("Extracted sym storage: " + str(sum) + " " + str( float(len(self.storage) - sum) / len(self.storage)))
         return filter_for_t_variable_data(sym_names)
 
     def extract_sym_names_from_constraints(self):
@@ -141,7 +142,7 @@ class TransactionTrace:
             sym_names.extend(vs_sym_names)
             if vs_sym_names:
                 sum += 1
-        print("Extracted sym constraints: " + str(sum) + " " + str( float(len(self.storage) - sum) / len(self.storage)))
+        printd("Extracted sym constraints: " + str(sum) + " " + str( float(len(self.storage) - sum) / len(self.storage)))
         return filter_for_t_variable_data(sym_names) # Todo Check whether here it is the right choice too, to filter ...
 
     """

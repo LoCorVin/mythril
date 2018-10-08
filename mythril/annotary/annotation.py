@@ -6,6 +6,7 @@ from .codeparser import find_matching_closed_bracket, get_pos_line_col
 from .coderewriter import expand_rew, after_implicit_block, get_exp_block_brack_pos, get_editor_indexed_rewriting
 from mythril.laser.ethereum.transaction.transaction_models import ContractCreationTransaction
 from .z3utility import get_function_from_constraint
+from .sn_utils import get_si_from_state
 
 
 
@@ -140,10 +141,11 @@ class Status(Enum):
 
 class Violation:
 
-    def __init__(self, violation, src_mapping, contract):
+    def __init__(self, violation, src_mapping, contract, additional = None):
         self.trace = TransactionTrace(violation.environment.active_account.storage, violation.mstate.constraints, contract)
         self.src_mapping = src_mapping
         self.contract = contract
+        self.additional = additional
 
 
 class Annotation:
@@ -233,8 +235,8 @@ class Annotation:
             self.viol_rts.append(rewriting_rt)
         print()
 
-    def set_violations(self, violations, src_mapping, contract): # Ads new violations to this annotation and sets the status, can be called multiple times
-        self.violations.extend([Violation(violation, src_mapping, contract) for violation in violations])
+    def set_violations(self, violations, src_mapping, contract, additional=None): # Ads new violations to this annotation and sets the status, can be called multiple times
+        self.violations.extend([Violation(violation, src_mapping, contract, additional) for violation in violations])
         # Todo Some violations might already be fulfilled without refering to storage(dependencies of other transactions)
         # Todo and thus not need transaction chaining verification
         self.status = Status.HSINGLE if self.violations else Status.HOLDS
@@ -402,6 +404,7 @@ class SetRestrictionAnnotation(Annotation):
         for _, node in sym_myth.nodes.items():
             for state in node.states:
                 if state.instruction['opcode'] == "SSTORE":
+                    function = None
                     is_fallback = False
                     in_constructor = isinstance(state.current_transaction, ContractCreationTransaction)
                     if not in_constructor:
@@ -413,18 +416,18 @@ class SetRestrictionAnnotation(Annotation):
                                 function = list(filter(lambda f: f.name == "", self.contract.functions))[0]
                             except IndexError:
                                 raise SyntaxError("Targeted unexisting fallback function")
-                            is_fallback = True
+                            is_fallback = True # Todo Don't forget to add fallback
                         # Skipp if function is somehow mentioned in the restricted list
-                        if function.name in self.restricted_f or in_constructor and ("constructor" in self.restricted_f
-                            or self.contract.name in self.restricted_f or any([restriction.startswith(self.contract.name + "(") for restriction in self.restricted_f]))\
-                            or function.signature in self.restricted_f:
-                            break
+                    if function and (function.name in self.restricted_f or function.signature in self.restricted_f) or in_constructor and ("constructor" in self.restricted_f
+                        or self.contract.name in self.restricted_f or any([restriction.startswith(self.contract.name + "(") for restriction in self.restricted_f])):
+                        break
                     for member_name, storage_slots in self.storage_slot_map.items():
                         for storage_slot in storage_slots:
                             if storage_slot.may_write_to(state.mstate.stack[-1], state.mstate.stack[-2], state.environment.active_account.storage._storage, state.mstate.constraints):
                                 # Todo Add more information to the single violation, e.g. here, which variable is or may be overwritten
-                                print(storage_slot)
-                                 # self.set_violations(...)
+                                src_info, mapping = get_si_from_state(self.annotation_contract, state.instruction['address'], state)
+                                print("Programs write to forbidden slot: " + str(src_info.lineno) + ":: " + src_info.code)
+                                self.set_violations([state], mapping, self.contract, member_name)
 
 
     def trans_violations_check(self, sym_tran, sym_con): # Or should i get the predfiltered transaction or even builded chains here
