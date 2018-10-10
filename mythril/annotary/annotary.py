@@ -277,7 +277,7 @@ class Annotary:
                 function.terminating_pos = list(map(lambda pos: (pos[0] - contract_range[0], pos[1]), function.terminating_pos))
 
             for kw in annotation_kw:
-                annot_iterator = finditer(r'/*@' + escape(kw), code)
+                annot_iterator = finditer(escape('/*@') + escape(kw), code)
                 annot_iter = next(annot_iterator, None)
                 if annot_iter and contract.name not in self.annotation_map:
                     self.annotation_map[contract.name] = []
@@ -431,12 +431,21 @@ class Annotary:
 
 
 
+
+
     def check_annotations(self):
 
         self.build_annotated_contracts()
         self.build_traces_and_violations()
 
-        # Todo filter violations if the annotation is only broken if it was broken before
+
+        print("Chain_building")
+        # Individual violation processing, set states and filter those where it is not decided for chaining
+
+        # Chaining and status update until all have fixed states or a certain limit is reached
+        for contract_name, annotations in self.annotation_map.items():
+            pass
+        # Todo Maybe filter violations if the annotation is only broken if it was broken before
 
         # Todo Set status, perform trace chaining strategy. Update Status
 

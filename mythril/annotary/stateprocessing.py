@@ -232,7 +232,7 @@ class AnnotationProcessor(PrePostProcessor):
 
 
             # Is exit instruction
-            if self.is_this_or_previouse_ignore_type(global_state, IType.EXIT) and not hasattr(global_state, "duplicate"):
+            if self.is_this_or_previouse_ignore_type(global_state, IType.EXIT) and not hasattr(global_state, "duplicate") and not self.is_this_or_previouse_ignore_type(global_state, IType.ENTRY): # Changed here from "duplicate to fix false drop"
                 printd("Drop at exit")
                 return returnable_new_states # Todo Drop only the ignored once at exit?
 #                if hasattr(new_state, 'saved_state'):

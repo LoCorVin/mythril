@@ -1,4 +1,4 @@
-debug = False
+debug = True
 
 def printd(string):
     if debug:

@@ -7,6 +7,7 @@ from .coderewriter import expand_rew, after_implicit_block, get_exp_block_brack_
 from mythril.laser.ethereum.transaction.transaction_models import ContractCreationTransaction
 from .z3utility import get_function_from_constraint
 from .sn_utils import get_si_from_state
+from copy import deepcopy
 
 
 
@@ -423,11 +424,16 @@ class SetRestrictionAnnotation(Annotation):
                         break
                     for member_name, storage_slots in self.storage_slot_map.items():
                         for storage_slot in storage_slots:
-                            if storage_slot.may_write_to(state.mstate.stack[-1], state.mstate.stack[-2], state.environment.active_account.storage._storage, state.mstate.constraints):
+                            may_write_to, constraints = storage_slot.may_write_to(state.mstate.stack[-1], state.mstate.stack[-2], state.environment.active_account.storage._storage, state.mstate.constraints)
+                            if may_write_to:
                                 # Todo Add more information to the single violation, e.g. here, which variable is or may be overwritten
                                 src_info, mapping = get_si_from_state(self.annotation_contract, state.instruction['address'], state)
                                 print("Programs write to forbidden slot: " + str(src_info.lineno) + ":: " + src_info.code)
-                                self.set_violations([state], mapping, self.contract, member_name)
+                                new_state = state
+                                if constraints and len(constraints) > 0:
+                                    new_state = deepcopy(state) # update with the assumtion taken by the may_write
+                                    new_state.mstate.constraints.extend(constraints)
+                                self.set_violations([new_state], mapping, self.contract, member_name)
 
 
     def trans_violations_check(self, sym_tran, sym_con): # Or should i get the predfiltered transaction or even builded chains here

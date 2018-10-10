@@ -1,7 +1,7 @@
 from .ast_parser import get_contract_storage_members
 from functools import reduce
 from .z3utility import are_z3_satisfiable
-from z3 import eq, BitVecVal, BitVec, Extract, Not
+from z3 import eq, BitVecVal, BitVec, Extract, Not, simplify
 from mythril.laser.ethereum.util import get_concrete_int
 
 type_alias = {"address": "int160", "bool": "int8", "byte": "bytes1", "ufixed": "ufixed128x18", "fixed": "fixed128x18",
@@ -57,6 +57,8 @@ class ConcretSlot(StorageSlot):
     def may_write_to(self, z3_index, z3_value, storage, constraint_list):
         same_slot = False
 
+        add_constraints = []
+
         # z3-index directly pointing to this slot
         concret_index = BitVecVal(self.slot_counter, 256)
 
@@ -66,16 +68,17 @@ class ConcretSlot(StorageSlot):
 
         # If not structurally equivalent, check if there is an assignment that allows them to be equivalent
         if not same_slot and not are_z3_satisfiable(constraint_list + [z3_index == self.slot_counter]):
-            return False
+            return False, None
+        add_constraints.append(simplify(z3_index == self.slot_counter))
 
         index_str = str(z3_index)
         # Rule out keccak symbolic variable as the function prevents someone from arbitrarily controlling the index
         if len(z3_index.children()) < 2 and index_str.startswith("keccak"):
-            return False # Todo Here I might do something more elaborate if I see that it does actually not solve critical writings
+            return False, None # Todo Here I might do something more elaborate if I see that it does actually not solve critical writings
 
         # If the slot is or may be the same and the slot we currently analyze is the same, we found a possible write
         if self.bitlength == 256:
-            return True
+            return True, add_constraints
 
         # If not, the slot is still written in its entirety but the observed chunk is loaded and overwritten by itself
 
@@ -87,12 +90,13 @@ class ConcretSlot(StorageSlot):
         # if the current content of the observed chunk and the respective chunk of the written value can be different
         # like by a different variable assignment, then we found it
         if are_z3_satisfiable(constraint_list + [Not(chunk_content == chunk_writing)]):
-            return True
+            add_constraints.append(simplify(Not(chunk_content == chunk_writing)))
+            return True, add_constraints
 
         # For the 256-bit chunks the last step should not be necessary, but a compiler could generate some code that
         # overwrites a slot content with itself. This function would have a false positive in that case.
 
-        return False
+        return False, None
 
 
     def may_read_from(self, z3_index, z3_value, storage, constraint_list):
