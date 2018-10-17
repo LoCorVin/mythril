@@ -18,6 +18,8 @@ from .annotation import annotation_kw, init_annotation, increase_rewritten_pos, 
 from .ast_parser import get_contract_ast, get_function_asts, get_function_param_tuples, get_function_term_positions, get_struct_map
 from .storage_members import extract_storage_map
 
+from .transchainstrategy import BackwardChainStrategy
+
 from z3 import BitVec,eq
 from os.path import exists, isdir, dirname, isfile, join
 from os import makedirs, chdir, listdir, getcwd
@@ -365,26 +367,6 @@ class Annotary:
             trans_ignore_list.extend(annotation.get_trans_ignore_list())
 
         counter = 0
-        #print("Constructor print")
-        #for instr in contr_to_const.disassembly.instruction_list:
-        #    ret = get_sourcecode_and_mapping(instr['address'], contr_to_const.disassembly.instruction_list, contract.creation_mappings)
-        #    if ret:
-        #        code = get_containing_file(contract).data[ret.offset:ret.offset + ret.length].replace('\n', "  ")
-        #        print(str(counter) + " " + str(instr) + "       " + code)
-        #    else:
-        #        print(instr)
-        #    counter += 1
-        #counter = 0
-        #print("Transaction print")
-        #for instr in contract.disassembly.instruction_list:
-        #    ret = get_sourcecode_and_mapping(instr['address'], contract.disassembly.instruction_list, contract.mappings)
-        #    if ret:
-        #        code = get_containing_file(contract).data[ret.offset:ret.offset + ret.length].replace('\n', "  ")
-        #        print(str(counter) + " " + str(counter) + " " + str(instr) + "       " + code)
-        #    else:
-        #        print(instr)
-        #    counter += 1
-        #print()
 
         # Used to run annotations violation build in traces construction in parallel
         annotationsProcessor = AnnotationProcessor(contract.creation_disassembly.instruction_list,
@@ -427,6 +409,8 @@ class Annotary:
     def build_traces_and_violations(self):
         for contract in self.annotated_contracts:
             const_traces, trans_traces = self.get_traces_and_build_violations(contract)
+            contract.const_traces = const_traces
+            contract.trans_traces = trans_traces
 
 
 
@@ -443,8 +427,10 @@ class Annotary:
         # Individual violation processing, set states and filter those where it is not decided for chaining
 
         # Chaining and status update until all have fixed states or a certain limit is reached
-        for contract_name, annotations in self.annotation_map.items():
-            pass
+        for contract in self.annotated_contracts:
+            annotations = self.annotation_map[contract.name]
+            chain_strat = BackwardChainStrategy(contract.const_traces, contract.trans_traces, annotations)
+            print()
         # Todo Maybe filter violations if the annotation is only broken if it was broken before
 
         # Todo Set status, perform trace chaining strategy. Update Status

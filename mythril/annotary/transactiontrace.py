@@ -62,6 +62,49 @@ class TransactionTrace:
         if lvl == 1:
             self.set_transaction_idx()
 
+
+    """   
+        Returns the list of referenced storage slots in storage slot content and constraints, these have to be 
+        solved/substituted with other expressions to find an executable chain.
+    """
+    def get_ref_storage_names(self):
+        if hasattr(self, "ref_slots"):
+            return self.ref_slots
+        # Todo recompute on combination
+        self.ref_slots = [[], []]
+        for constraints in self.tran_constraints:
+            self.ref_slots[1].extend(constraints.slot_names)
+        for slot_idx, slot in self.storage.items():
+            if not eq(slot.slot, BitVec("storage[" + str(slot_idx) + "]", 256)):
+                self.ref_slots[0].extend(slot.slot_names)
+        return self.ref_slots
+
+
+    """
+        Returns a mapping, that mapps the contained written storage names to the storage names of slots mapped in the 
+        contained expression:
+        
+        e.g. 1: UDIV(storage[0], UADD(storage[0], storage[1]))  ->    "storage[0]" : ["storage[0]", "storage[1]"]
+    """
+    def get_storage_subs_map(self):
+        if hasattr(self, "subs_map"):
+            return self.subs_map
+        # Todo recompute on combination
+        self.subs_map = {}
+        for slot_idx, slot in self.storage.items():
+            if not eq(slot.slot, BitVec("storage[" + str(slot_idx) + "]", 256)):
+                self.subs_map["storage[" + str(slot_idx) + "]"] = slot.slot_names
+        return self.subs_map
+
+    def update_ref_storage_names(self):
+        del self.ref_slots
+        self.get_ref_storage_names()
+
+    def update_storage_subs_map(self):
+        del self.subs_map
+        self.get_storage_subs_map()
+
+
     def __str__(self):
         return str(self.as_dict())
 
@@ -146,7 +189,7 @@ class TransactionTrace:
         return filter_for_t_variable_data(sym_names) # Todo Check whether here it is the right choice too, to filter ...
 
     """
-          Either do only deep checing here and use the proper trace or storage_slot reduction in the apply function. Or do
+          Either do only deep checking here and use the proper trace or storage_slot reduction in the apply function. Or do
           both here.
       """
 

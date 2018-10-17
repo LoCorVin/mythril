@@ -161,9 +161,10 @@ class AnnotationProcessor(PrePostProcessor):
 
         if self.is_this_or_previouse_ignore_type(global_state, IType.VIOLATION): # violation
             printd("violation")
-            for idx in range(len(global_state.mstate.constraints)):
-                global_state.mstate.constraints[idx] = simplify(global_state.mstate.constraints[idx])
-            if are_z3_satisfiable(global_state.mstate.constraints):
+            # Should not be necessary as conditions are simplified when conditions are build in jumpi
+            #for idx in range(len(global_state.mstate.constraints)):
+            #    global_state.mstate.constraints[idx] = simplify(global_state.mstate.constraints[idx])
+            if True: # are_z3_satisfiable(global_state.mstate.constraints):
                 violating_state = deepcopy(global_state)
                 del violating_state.saved_state # Todo Why do we delete this here? I think we need the mark to ignore it in graph building
 

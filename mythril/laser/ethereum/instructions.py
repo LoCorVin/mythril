@@ -761,8 +761,8 @@ class Instruction:
         state = global_state.mstate
         index, value = state.stack.pop(), state.stack.pop()
 
-        # print(simplify(index))
-        # print(simplify(value))
+        # print("Index: " + str(simplify(index)))
+        # print("Value: " + str(simplify(value)))
 
         logging.debug("Write to storage[" + str(index) + "]")
 
