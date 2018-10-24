@@ -834,8 +834,8 @@ class Instruction:
             new_state.mstate.constraints.append(negated)
             states.append(new_state)
         else:
-            print(condition)
-            print("Prunned unreachable false state")
+            # print(condition)
+            # print("Prunned unreachable false state")
             logging.debug("Pruned unreachable states.")
 
         # True case
@@ -858,8 +858,8 @@ class Instruction:
 
                 states.append(new_state)
             else:
-                print(condition)
-                print("Prunned unreachable true state")
+                # print(condition)
+                # print("Prunned unreachable true state")
                 logging.debug("Pruned unreachable states.")
 
         return states

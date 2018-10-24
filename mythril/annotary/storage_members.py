@@ -1,6 +1,6 @@
-from .ast_parser import get_contract_storage_members
+from mythril.annotary.ast_parser import get_contract_storage_members
 from functools import reduce
-from .z3utility import are_z3_satisfiable
+from mythril.annotary.z3utility import are_z3_satisfiable
 from z3 import eq, BitVecVal, BitVec, Extract, Not, simplify
 from mythril.laser.ethereum.util import get_concrete_int
 
@@ -157,6 +157,8 @@ def extract_storage_map(contract, struct_map):
         m_type = member.type
         m_info, slot_counter, bit_counter = get_storage_mapping_for_types(contract.ast, struct_map, m_type, slot_counter, bit_counter)
         storage_map[member.name] = m_info
+        for slot in m_info:
+            slot.member = member
     return storage_map
 
 

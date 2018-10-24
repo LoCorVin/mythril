@@ -3,10 +3,7 @@ from mythril.laser.ethereum.svm import SVMError
 from mythril.laser.ethereum.transaction import ContractCreationTransaction
 from copy import deepcopy
 from enum import Enum
-from z3 import simplify
-from .z3utility import are_z3_satisfiable
-from .sn_utils import get_sourcecode_and_mapping
-from .debugc import printd
+from mythril.annotary.debugc import printd
 
 def instr_eq(instr1, instr2):
     if instr1['address'] == instr2['address'] and instr1['opcode'] == instr2['opcode'] and ('argument' in instr1) == ('argument' in instr2) and ('argument' not in instr1 or instr1['argument'] == instr2['argument']):

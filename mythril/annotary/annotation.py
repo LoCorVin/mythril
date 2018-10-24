@@ -5,9 +5,10 @@ from .transactiontrace import TransactionTrace
 from .codeparser import find_matching_closed_bracket, get_pos_line_col
 from .coderewriter import expand_rew, after_implicit_block, get_exp_block_brack_pos, get_editor_indexed_rewriting
 from mythril.laser.ethereum.transaction.transaction_models import ContractCreationTransaction
-from .z3utility import get_function_from_constraint
+from .z3utility import get_function_from_constraints
 from .sn_utils import get_si_from_state
 from copy import deepcopy
+from .debugc import printd
 
 
 
@@ -29,9 +30,10 @@ def comment_out_annotations(filename):
 
             filedata = filedata[:kw_idx.start()] + "/*" + filedata[kw_idx.start():end_idx] + "*/" + filedata[end_idx:]
 
-    print(filedata)
+    printd(filedata)
     with open(filename, 'w') as file:
         file.write(filedata)
+
 
 def recomment_annotations(filename):
     with open(filename, 'r') as file:
@@ -49,8 +51,10 @@ def recomment_annotations(filename):
     with open(filename, 'w') as file:
         file.write(filedata)
 
+
 def get_origin_pos_line_col(text): # Todo attentions, new commenting out
     return get_pos_line_col(text.replace(ANNOTATION_START_REPLACEMENT_NEW, ANNOTATION_START))
+
 
 def get_annotation_content(code, content_start):
     match_annotation_start = match(r'\s*\(', code[content_start:])
@@ -59,6 +63,7 @@ def get_annotation_content(code, content_start):
     m_string = match_annotation_start.group()
     closed_idx = find_matching_closed_bracket(code, content_start + len(m_string) - 1)
     return code[(content_start + len(m_string)):closed_idx], len(m_string)
+
 
 def get_annotated_members(contract, code, start, annotation_length):
     preceded_member = None
@@ -124,6 +129,19 @@ def is_mapping_inside_range(mapping, start_pos, end_pos):
     # mapping.lineno == rewriting.line and
     return mapping.offset >= start_pos and mapping.offset < end_pos and mapping.length + mapping.offset <= end_pos
 
+def get_status_string(status):
+    if status == Status.HSINGLE:
+        return "hsingle"
+    elif status == Status.HOLDS:
+        return "holds"
+    elif status == Status.VDEPTH:
+        return "vdepth"
+    elif status == Status.VCHAIN:
+        return "vchain"
+    elif status == Status.VSINGLE:
+        return "vsingle"
+    elif status == Status.UNCHECKED:
+        return "unchecked"
 
 class Status(Enum):
     HOLDS = 1 # SAT solver did not find any possible violation
@@ -133,27 +151,63 @@ class Status(Enum):
     VCHAIN = 5 # Chain with violation in the end and construction trace in the beginning found
     VSINGLE = 6 # violation with no references to storage found.
 
-    # Todo When chaining the same as with single violations can happen, when the constraints do not contain ref. to
-    # Todo Storage anymore, the chain does not have to be completed with a construction trace at the beginning
-
     # Maybe an additional status: Violating constraints and or storage reference only prev. trans vals or do it in a way
     # that the violation must have existed before the transaction execution.
 
 
 class Violation:
 
-    def __init__(self, violation, src_mapping, contract, additional = None):
-        self.trace = TransactionTrace(violation.environment.active_account.storage, violation.mstate.constraints, contract)
+    def __init__(self, violation, src_mapping, contract, additional = None, length=None, vio_description=""):
+        self.vio_description = vio_description
+        self.trace = TransactionTrace(violation, contract)
+
         self.src_mapping = src_mapping
+        self.src_info = contract.get_source_info_from_mapping(self.src_mapping)
+
+        self.lineno = src_mapping.lineno
+        self.offset = src_mapping.offset
+        self.length = src_mapping.length
+        self.code = self.src_info.code
+        self.filename = self.src_info.filename
+
+        if length:
+            self.length = length
+
+        self.vio_description = vio_description
+
         self.contract = contract
         self.additional = additional
+
+
+    def get_dictionary(self):
+
+        return {"level": get_status_string(self.status), "lvl_description": self.get_lvl_description(),
+                "filename": self.filename, "lineno": self.lineno, "code": self.code,
+                "length": self.length, "offset": self.offset,
+                "vio_description": self.vio_description, "transaction_depth": self.trace.lvl,
+                "chained_functions": [{"name": func.name, "signature": func.signature} for func in self.trace.functions]}
+
+    def get_lvl_description(self):
+        lvl = self.status
+        if lvl == Status.UNCHECKED:
+            return "This violation was not checked." # Should not happen.
+        elif lvl == Status.HSINGLE:
+            return "Violation that can be disregarded looking at the single transaction it appears in." # Should not happen.
+        elif lvl == Status.HOLDS:
+            return "Violation that can be disregarded looking at the context, the other transaction that can be executed to this contract."
+        elif lvl == Status.VDEPTH:
+            return "A combination of multiple transactions might allow to trigger this violation. Exploring a chain that does this was not possible due to the depth restriction to the analysis. So the violation may not be exploitable."
+        elif lvl == Status.VCHAIN:
+            return "A combination of multiple transactions allows to exploit this violation of the annotation. However at least two or more transactions are necessary."
+        elif lvl == Status.VSINGLE:
+            return "This violation can be triggered by executing only one transaction."
 
 
 class Annotation:
 
     def __init__(self, annotation_str, status=Status.UNCHECKED):
         self.status = status
-        self.annotation_str = annotation_str
+        self.annotation_str = annotation_str[annotation_str.index("@"):]
         self.violations = [] # Filled when executing scheck_single_transactions
 
         self.viol_rews = [] # List of rewritings that contain code to be traceless in the symbolic execution
@@ -234,12 +288,15 @@ class Annotation:
             self.enter_inst.append(enter_instr)
 
             self.viol_rts.append(rewriting_rt)
-        print()
 
-    def set_violations(self, violations, src_mapping, contract, additional=None): # Ads new violations to this annotation and sets the status, can be called multiple times
-        self.violations.extend([Violation(violation, src_mapping, contract, additional) for violation in violations])
-        # Todo Some violations might already be fulfilled without refering to storage(dependencies of other transactions)
-        # Todo and thus not need transaction chaining verification
+
+    def get_dictionary(self):
+        adict = {"title": self.title, "level": get_status_string(self.status), "lvl_description": self.get_lvl_description(), "ano_description": "",
+                 "violations": [violation.get_dictionary() for violation in self.violations]}
+        return adict
+
+    def add_violations(self, violations, src_mapping, contract, additional=None, length=None, vio_description=""): # Ads new violations to this annotation and sets the status, can be called multiple times
+        self.violations.extend([Violation(violation, src_mapping, contract, additional, length, vio_description) for violation in violations])
         self.status = Status.HSINGLE if self.violations else Status.HOLDS
 
     def get_creation_ignore_list(self):
@@ -256,28 +313,34 @@ class Annotation:
     def build_violations(self, sym_myth):
         pass
 
+
+    def get_lvl_description(self):
+        lvl = self.status
+        if lvl == Status.UNCHECKED:
+            return "Status of the annotation was not checked jet, nothing can be said about possibly existing violations."
+        elif lvl == Status.HSINGLE:
+            return "No possible violation found, no operation in a single transaction can be turned into a violation by setting it up via multiple transactions."
+        elif lvl == Status.HOLDS:
+            return "The other transactions in the contract prevent a violation from being exploitable. Changing the code of a transaction might create a violation in an other transaction."
+        elif lvl == Status.VDEPTH:
+            return "There are violations to this annotation, but a combination of multiple transactions might allow to trigger them. Exploring these chains was not possible due to the depth restriction to the analysis. So the violation may not be exploitable."
+        elif lvl == Status.VCHAIN:
+            return "At least one violation has been found were the combination of multiple transactions can lead to a violation of the annotation. However at least two or more transactions are necessary."
+        elif lvl == Status.VSINGLE:
+            return "At least one violation has been found that can be triggered by executing one single transaction."
+
     def trans_violations_check(self, sym_tran, sym_con): # Or should i get the predfiltered transaction or even builded chains here
         raise NotImplementedError("Abstract function of Annotation abstraction")
 
     def get_violations_description(self): # Returns a tuple or list of tuples with description, assoviated line and string to highlight.
         raise NotImplementedError("Abstract function of Annotation abstraction")
 
-#    def __init__(self, annstring, lineno, fileoffset):
-#        self.annstring = annstring
-#
-#        annotation = search(r'@(?P<aname>[^\{\}]*)(\{(?P<acontent>.*)\})?', annstring)
-#        if not annotation:
-#            raise SyntaxError("{} is not a correct annotation".format(annstring))
-#
-#        self.aname = annotation['aname']
-#        self.acontent = annotation['acontent']
-#        self.lineno = lineno
-#        self.length = len(annstring)
-#        self.fileoffset = fileoffset
 
 class CheckAnnotation(Annotation):
 
     def __init__(self, annotation_str, loc, origin_loc):
+        self.title = "Check annotation"
+
         self.annotation_str = annotation_str
         self.loc = loc
         self.origin = origin_loc # Has to be calculated before
@@ -308,7 +371,11 @@ class CheckAnnotation(Annotation):
         raise NotImplementedError("Abstract function of Annotation abstraction")
 
 class InvariantAnnotation(Annotation):
+
+
     def __init__(self, contract, annotation_str, loc, origin_loc):
+        self.title = "Invariant annotation"
+
         self.annotation_str = annotation_str
         self.loc = loc
         self.origin = origin_loc
@@ -384,6 +451,8 @@ class SetRestrictionAnnotation(Annotation):
     # Any function name, or signature, 'constructor' or contract name for constructor, empty content or '()' as parameter
 
     def __init__(self, contract, annotation_str, content, member_variables):
+        self.title = "Set restriction annotation"
+
         self.restricted_f = []
         self.storage_slot_map = {}
         self.contract = contract
@@ -409,16 +478,16 @@ class SetRestrictionAnnotation(Annotation):
                     is_fallback = False
                     in_constructor = isinstance(state.current_transaction, ContractCreationTransaction)
                     if not in_constructor:
-                        function = get_function_from_constraint(self.contract, state.mstate.constraints)
+                        function = get_function_from_constraints(self.contract, state.mstate.constraints, isinstance(state.current_transaction, ContractCreationTransaction))
                         if function:
-                            print(function.name)
+                            printd(function.name)
                         else:
                             try:
                                 function = list(filter(lambda f: f.name == "", self.contract.functions))[0]
                             except IndexError:
                                 raise SyntaxError("Targeted unexisting fallback function")
                             is_fallback = True # Todo Don't forget to add fallback
-                        # Skipp if function is somehow mentioned in the restricted list
+                    # Skipp if function is somehow mentioned in the restricted list
                     if function and (function.name in self.restricted_f or function.signature in self.restricted_f) or in_constructor and ("constructor" in self.restricted_f
                         or self.contract.name in self.restricted_f or any([restriction.startswith(self.contract.name + "(") for restriction in self.restricted_f])):
                         break
@@ -428,12 +497,14 @@ class SetRestrictionAnnotation(Annotation):
                             if may_write_to:
                                 # Todo Add more information to the single violation, e.g. here, which variable is or may be overwritten
                                 src_info, mapping = get_si_from_state(self.annotation_contract, state.instruction['address'], state)
-                                print("Programs write to forbidden slot: " + str(src_info.lineno) + ":: " + src_info.code)
+                                printd("Contract may write to forbidden slot: " + str(src_info.lineno) + ":: " + src_info.code)
                                 new_state = state
                                 if constraints and len(constraints) > 0:
                                     new_state = deepcopy(state) # update with the assumtion taken by the may_write
                                     new_state.mstate.constraints.extend(constraints)
-                                self.set_violations([new_state], mapping, self.contract, member_name)
+                                self.add_violations([new_state], mapping, self.contract, member_name,
+                                    vio_description="This statement may write to the member variable '" + storage_slot.member.name
+                                                    + "' of type '" + storage_slot.member.type+"' although not allowed by the annotation: " + str(self.annotation_str))
 
 
     def trans_violations_check(self, sym_tran, sym_con): # Or should i get the predfiltered transaction or even builded chains here

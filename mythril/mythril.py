@@ -16,8 +16,6 @@ from solc.exceptions import SolcError
 import solc
 from configparser import ConfigParser
 import platform
-from copy import deepcopy
-from mythril.disassembler.disassembly import Disassembly
 
 from mythril.ether import util
 from mythril.ether.ethcontract import ETHContract

@@ -1,6 +1,6 @@
 from re import finditer, escape, DOTALL
-from re import findall, sub
-from .codeparser import find_matching_closed_bracket, get_newlinetype, is_commented_out
+from re import sub
+from mythril.annotary.codeparser import find_matching_closed_bracket, get_newlinetype
 
 
 

@@ -1,6 +1,7 @@
 from re import findall,search, escape, finditer
 from mythril.exceptions import CompilerError
 from subprocess import Popen, PIPE
+from .debugc import printd
 import json
 import sys
 
@@ -79,7 +80,7 @@ def get_minimal_constructor_param_encoding_len(abi):
                 con_inputs = spec['inputs']
                 return get_minimal_byte_enc_len(con_inputs)
         except KeyError:
-            print("ABI does not contain inputs for constructor")
+            printd("ABI does not contain inputs for constructor")
     return -1
 
 def get_calldata_name_map(abi):
@@ -98,7 +99,7 @@ def get_calldata_name_map(abi):
                 signature += ")"
                 calldata_mappings[signature] = get_params_name_map(spec['inputs']) # not just name but also signature
         except KeyError:
-            print("ABI does not contain inputs for " + spec['type'] + "" if 'name' not in spec else (": " + spec['name']))
+            printd("ABI does not contain inputs for " + spec['type'] + "" if 'name' not in spec else (": " + spec['name']))
     return calldata_mappings
 
 def get_minimal_constr_param_byte_length(filename, contract_name=None):
@@ -152,7 +153,7 @@ def get_solc_abi_json(file, solc_binary="solc", solc_args=None):
 
     out = out[out.index("["):]
 
-    print(out)
+    printd(out)
 
     return json.loads(out)
 
@@ -259,7 +260,7 @@ def abi_json_to_abi(abi_json):
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        print("Size:")
-        print(get_minimal_constr_param_byte_length(sys.argv[1]))
+        printd("Size:")
+        printd(get_minimal_constr_param_byte_length(sys.argv[1]))
     else:
-        print("Error: No file specified")
+        printd("Error: No file specified")

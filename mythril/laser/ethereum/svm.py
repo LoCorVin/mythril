@@ -78,7 +78,6 @@ class LaserEVM:
         elif creation_code:
             logging.info("Starting contract creation transaction")
             created_account = execute_contract_creation(self, creation_code, contract_name=contract_name, code_extension=code_extension)
-            print("Finished contract creation")
             logging.info("Finished contract creation, found {} open states".format(len(self.open_states)))
             if len(self.open_states) == 0:
                 print("No contract was created during the execution of contract creation "

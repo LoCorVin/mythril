@@ -9,13 +9,13 @@ import logging
 import json
 import sys
 import argparse
-from mythril.annotary.annotary import Annotary
 
 # logging.basicConfig(level=logging.DEBUG)
 
 from mythril.exceptions import CriticalError, AddressNotFoundError
 from mythril.mythril import Mythril
 from mythril.version import VERSION
+from mythril.annotary.annotary import Annotary
 
 
 def exit_with_error(format, message):
@@ -243,6 +243,7 @@ def main():
             annotary.provide_resources(mythril.contracts, address, mythril.eth, mythril.dynld, mythril.sigs)
             annotary.parse_annotations()
             annotary.check_annotations()
+            print(annotary.get_annotation_json())
             annotary.delete_tmp_dir()
 
         elif args.statespace_json:

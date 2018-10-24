@@ -7,18 +7,18 @@ import mythril.laser.ethereum.util as helper
 from mythril.laser.ethereum.state import MachineState, GlobalState, Account, Environment, CalldataType
 from mythril.laser.ethereum.transaction import ContractCreationTransaction
 
-from .sn_utils import get_sourcecode_and_mapping, flatten
-from .transactiontrace import TransactionTrace
-from .z3utility import are_z3_satisfiable
-from .calldata import get_minimal_constructor_param_encoding_len, abi_json_to_abi, get_calldata_name_map
-from .coderewriter import write_code, get_code, replace_comments_with_whitespace, apply_rewriting
-from .codeparser import find_matching_closed_bracket, newlines, get_newlinetype
-from .stateprocessing import AnnotationProcessor
-from .annotation import annotation_kw, init_annotation, increase_rewritten_pos, comment_out_annotations, expand_rew
-from .ast_parser import get_contract_ast, get_function_asts, get_function_param_tuples, get_function_term_positions, get_struct_map
-from .storage_members import extract_storage_map
+from mythril.annotary.sn_utils import get_sourcecode_and_mapping, flatten
+from mythril.annotary.transactiontrace import TransactionTrace
+from mythril.annotary.z3utility import are_z3_satisfiable
+from mythril.annotary.calldata import get_minimal_constructor_param_encoding_len, abi_json_to_abi, get_calldata_name_map
+from mythril.annotary.coderewriter import write_code, get_code, replace_comments_with_whitespace, apply_rewriting
+from mythril.annotary.codeparser import find_matching_closed_bracket, newlines, get_newlinetype
+from mythril.annotary.stateprocessing import AnnotationProcessor
+from mythril.annotary.annotation import annotation_kw, init_annotation, increase_rewritten_pos, comment_out_annotations, expand_rew
+from mythril.annotary.ast_parser import get_contract_ast, get_function_asts, get_function_param_tuples, get_function_term_positions, get_struct_map
+from mythril.annotary.storage_members import extract_storage_map
 
-from .transchainstrategy import BackwardChainStrategy
+from mythril.annotary.transchainstrategy import BackwardChainStrategy
 
 from z3 import BitVec,eq
 from os.path import exists, isdir, dirname, isfile, join
@@ -27,7 +27,9 @@ from re import finditer, escape
 from shutil import rmtree, copy
 from re import findall, DOTALL
 from functools import reduce
-from .debugc import printd
+from mythril.annotary.debugc import printd
+
+from json import dumps
 
 project_name = "annotary"
 
@@ -163,48 +165,6 @@ def get_contract_code(contract):
 """
     Here it might be better to split annotations into the containing constraint an the prefix and sufix
 """
-
-
-#def parse_annotation_info(filedata):
-#    annotations = []
-#    for inv in findall(r'/*@invariant\<([^\)]+)\>;(\r\n|\r|\n)', filedata):
-#        match_inv = "/*@invariant<" + inv[0] + ">;"
-#        for pos in find_all(filedata, match_inv + inv[1]):
-#            line = count_elements(filedata[:pos], newlines) + 1
-#            col = pos - max(map(lambda x: filedata[:pos].rfind(x), newlines))
-#            annotations.append((pos, line, col, '//invariant(', inv[0], ")", inv[1]))
-#    return set(annotations)
-
-#def parse_annotation_info(code):
-#    annotations = []
-#    for kw in annotation_kw:
-#        annot_iterator = finditer(r'/*@' + escape(kw), code)
-#        annot_iter = next(annot_iterator, None)
-#        while annot_iter:
-#            print(annot_iter.group())
-#            print(code[annot_iter.start():annot_iter.end()])
-#            annotation = init_annotation(code, annot_iter.group(), kw, annot_iter.start(), annot_iter.end())
-#            annotations.append(annotation)
-#            annot_iter = next(annot_iterator, None)
-
-
-#def read_write_file(filename):
-#    with open(filename, 'r') as file:
-#        filedata = file.read()
-#
-#    annotations = parse_annotation_info(filedata)
-#
-#    annotations = sorted(list(annotations), key=lambda x: x[0], reverse=True)
-#    for annotation in annotations:
-#        filedata = replace_index(filedata, annotation[3] + annotation[4] + annotation[5] + annotation[6], "assert("
-#                                 + annotation[4] + ");" + annotation[6], annotation[0])
-    # Replace the target string
-    # filedata = filedata.replace('@ensure', '@invariant')
-    # filedata = filedata.replace('@invariant', '@ensure')
-
-#    with open(filename, 'w') as file:
-#        file.write(filedata)
-#    return annotations
 
 class Annotary:
 
@@ -388,12 +348,14 @@ class Annotary:
         for ign_idx in range(len(trans_ignore_list)):
             annotation = trans_ignore_list[ign_idx][4]
             mapping = get_sourcecode_and_mapping(trans_ignore_list[ign_idx][2]['address'], contract.disassembly.instruction_list, contract.mappings)
-            annotation.set_violations(annotationsProcessor.trans_violations[ign_idx], mapping, contract)
+            annotation.add_violations(annotationsProcessor.trans_violations[ign_idx], mapping, contract, length=0,
+                    vio_description="An assert with the annotations condition would fail here.")
 
         for ign_idx in range(len(create_ignore_list)):
             annotation = create_ignore_list[ign_idx][4]
             mapping = get_sourcecode_and_mapping(create_ignore_list[ign_idx][2]['address'], contract.creation_disassembly.instruction_list, contract.creation_mappings)
-            annotation.set_violations(annotationsProcessor.create_violations[ign_idx], mapping, contract)
+            annotation.add_violations(annotationsProcessor.create_violations[ign_idx], mapping, contract, length=0,
+                                      vio_description="An assert with the annotations condition would fail here.")
 
         for annotation in self.annotation_map[contract.name]:
             annotation.build_violations(sym_transactions)
@@ -423,19 +385,25 @@ class Annotary:
         self.build_traces_and_violations()
 
 
-        print("Chain_building")
+        printd("Chain_building")
         # Individual violation processing, set states and filter those where it is not decided for chaining
 
         # Chaining and status update until all have fixed states or a certain limit is reached
         for contract in self.annotated_contracts:
             annotations = self.annotation_map[contract.name]
             chain_strat = BackwardChainStrategy(contract.const_traces, contract.trans_traces, annotations)
-            print()
+            printd("Start")
+            chain_strat.check_violations()
+            printd("Stop")
         # Todo Maybe filter violations if the annotation is only broken if it was broken before
 
         # Todo Set status, perform trace chaining strategy. Update Status
 
         # Todo Return the annotations with violation information
+
+    def get_annotation_json(self):
+        return dumps({contract_name: [annotation.get_dictionary() for annotation in annotations] for contract_name,
+                                                annotations in self.annotation_map.items()}, sort_keys=True, indent=4)
 
 
     def enter_tmp_dir(self):
@@ -492,7 +460,7 @@ def get_traces(statespace, contract):
 
                     if mapping:
 
-                        trace = TransactionTrace(state.environment.active_account.storage, state.mstate.constraints, contract)
+                        trace = TransactionTrace(state, contract)
                         if isinstance(state.current_transaction, ContractCreationTransaction):
                             constr_traces.append(trace)
                         else:
@@ -522,7 +490,7 @@ def get_construction_traces(statespace):
             if instruction['opcode']  in ["STOP", "RETURN"]:
                 storage = state.environment.active_account.storage
                 if storage and not is_storage_primitive(storage) and are_z3_satisfiable(state.mstate.constraints):
-                    traces.append(TransactionTrace(state.environment.active_account.storage, state.mstate.constraints))
+                    traces.append(TransactionTrace(state))
                 else:
                     num_elimi_traces += 1
     printd("Construction traces: " + str(len(traces)) + " eliminated: " + str(num_elimi_traces))

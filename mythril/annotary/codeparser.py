@@ -6,17 +6,6 @@ closing_brackets = [")", "}", "]", ">"]
 newlines_reg = r'(\r\n|\r|\n)'
 newlines = ['\r\n', '\r', '\n']
 
-#def parse_contract(contract):
-
-
-    # Todo return a list of tuples with function name, bracket positions and ranges
-
-#def in_function(code):
-#    pass
-
-
-
-
 def count_lines(text):
     if text == "":
         return 0

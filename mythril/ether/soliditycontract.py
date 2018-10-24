@@ -36,6 +36,10 @@ class SourceCodeInfo:
         self.lineno = lineno
         self.code = code
 
+    @property
+    def as_dict(self):
+        return {'filename': self.filename, 'lineno': self.lineno, 'code': self.code}
+
 def build_src_mappings(srcmapping, solidity_files):
     mappings = []
     for item in srcmapping:
@@ -141,5 +145,21 @@ class SolidityContract(ETHContract):
 
         code = solidity_file.data.encode('utf-8')[offset:offset + length].decode('utf-8')
         lineno = self.mappings[index].lineno
+
+        return SourceCodeInfo(filename, lineno, code)
+
+
+    def get_source_info_from_mapping(self, mapping):
+
+
+        solidity_file = self.solidity_files[mapping.solidity_file_idx]
+
+        filename = solidity_file.filename
+
+        offset = mapping.offset
+        length = mapping.length
+
+        code = solidity_file.data.encode('utf-8')[offset:offset + length].decode('utf-8')
+        lineno = mapping.lineno
 
         return SourceCodeInfo(filename, lineno, code)

@@ -100,13 +100,20 @@ def extract_sym_names(obj):
 '''
     If None is returned the function that is searched is the default function or the constructor
 '''
-def get_function_from_constraint(contract, constraints):
-    for constraint in constraints:
-        for func in contract.functions:
+def get_function_from_constraints(contract, constraints, is_constructor=False):
+    default_func = None
+    for func in contract.functions:
+        if func.isConstructor and is_constructor:
+            return func
+        for constraint in constraints:
             if len(func.hash) > 0:
                 function_constraint = Extract(255, 224,
                                               BitVec('calldata_' + contract.name + "[0]", 256)) == int(func.hash,
                                                                                                        16)
                 if eq(simplify(function_constraint), constraint):
                     return func
-    return None
+        if not func.isConstructor:
+            if func.signature == "()":
+                default_func = func
+    return default_func
+

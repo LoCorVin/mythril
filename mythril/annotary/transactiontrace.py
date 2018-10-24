@@ -1,8 +1,9 @@
 from z3 import *
-from .z3utility import get_function_from_constraint, simplify_constraints_individually, sanitize_expr
+from mythril.annotary.z3utility import get_function_from_constraints, simplify_constraints_individually, sanitize_expr
 from copy import deepcopy
-from .sn_utils import flatten
-from .debugc import printd
+from mythril.annotary.sn_utils import flatten
+from mythril.annotary.debugc import printd
+from mythril.laser.ethereum.transaction import ContractCreationTransaction
 import re
 from mythril.annotary.z3utility import are_satisfiable, simplify_constraints, simplify_z3_constraints, \
     extract_sym_names, filter_for_t_variable_data
@@ -30,11 +31,15 @@ def deep_bitvec_substitute(obj, subs_map):
 
 class TransactionTrace:
 
-    def __init__(self, storage, constraints, contract=None, lvl=1):
+    def __init__(self, state, contract=None, lvl=1):
         # self.storage = {k: simplify(v) for k,v in storage }
+        constraints = state.mstate.constraints
+        storage = state.environment.active_account.storage
         self.constraints = simplify_constraints_individually(constraints)
         if contract:
-            self.function = get_function_from_constraint(contract, self.constraints)
+            self.functions = [get_function_from_constraints(contract, state.mstate.constraints, isinstance(state.current_transaction, ContractCreationTransaction))]
+            if None in self.functions:
+                print()
 
         # eliminate all constraints that only contain names not in the set of names from storage
         self.constraints = simplify_z3_constraints(self.constraints) # Todo simplification of the sum of constraints
@@ -226,6 +231,7 @@ class TransactionTrace:
         new_trace.lvl += self.lvl
         new_trace.sym_names.extend(deepcopy(self.sym_names))
         # self can be omitted (e.g. when related storage locations were overwritten)
+        new_trace.functions = self.functions + tt.functions
         if simp_and_sat:
             new_trace.simplify_storage()
             new_trace.tran_constraints = simplify_constraints(new_trace.tran_constraints)
