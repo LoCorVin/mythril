@@ -102,7 +102,8 @@ def init_annotation(contract, code, head, kw, start, end):
     elif kw == "set_restricted":
         content, content_prefix = get_annotation_content(code, start + len(head))
         member_vars = get_annotated_members(contract, code, start, len(head + content) + 2)
-        return SetRestrictionAnnotation(contract, code[start:(end + content_prefix)] + content + ")", content, member_vars)
+        return SetRestrictionAnnotation(contract, code[start:(end + content_prefix)] + content + ")", content,
+                member_vars, get_pos_line_col(code[:start]), get_origin_pos_line_col(code[:start]))
 
     elif kw == "ethersink":
         pass
@@ -230,6 +231,9 @@ class Annotation:
         self.annotation_contract = annotation_contract
         self.build_instruction_lists()
 
+    def get_annotation_description(self):
+        raise NotImplementedError("Abstract function of Annotation abstraction")
+
     def build_instruction_lists(self):
 
         for v_rewriting in self.viol_rews:
@@ -291,7 +295,9 @@ class Annotation:
 
 
     def get_dictionary(self):
-        adict = {"title": self.title, "level": get_status_string(self.status), "lvl_description": self.get_lvl_description(), "ano_description": "",
+        adict = {"title": self.title, "level": get_status_string(self.status), "lvl_description": self.get_lvl_description(),
+                 "ano_description": self.get_annotation_description(), "pos": self.origin[0], "line": self.origin[1], "col": self.origin[2],
+                 "ano_string": self.annotation_str, "length": len(self.annotation_str),
                  "violations": [violation.get_dictionary() for violation in self.violations]}
         return adict
 
@@ -350,6 +356,11 @@ class CheckAnnotation(Annotation):
         self.content = self.content[(self.content.index(")") + 1):][::-1]
 
         Annotation.__init__(self, annotation_str)
+
+    def get_annotation_description(self):
+        return "This annotation checks whether or not the specified condition '" + self.content + "' can be false at " \
+            + "this point in the program. An assert is inserted and symbolic execution tries to find falsifying " \
+            + "assigments. The presence of the assert statement does not influence the later execution."
 
     def rewrite_code(self, code, contract_range): # In the default case it returns '' empty string, to delete it before handing it over to the compiler
         assert_rew = expand_rew(code, ("assert(" + self.content + ");", self.loc[0]))
@@ -434,6 +445,10 @@ class InvariantAnnotation(Annotation):
         return self.rewritings
 
 
+    def get_annotation_description(self):
+        return "This annotation represents an invariant that should hold after every finished transaction execution. The" \
+            + " annotations condition '" + self.content + "' is checked by inserting an assert statement at the exit " \
+            + "points of every transaction function that can be executed by a transaction and do change the contracts states."
 
 
 
@@ -450,8 +465,20 @@ class SetRestrictionAnnotation(Annotation):
 
     # Any function name, or signature, 'constructor' or contract name for constructor, empty content or '()' as parameter
 
-    def __init__(self, contract, annotation_str, content, member_variables):
+    def __init__(self, contract, annotation_str, content, member_variables, loc, origin_loc):
         self.title = "Set restriction annotation"
+
+        self.annotation_str = annotation_str
+        self.loc = loc
+        self.origin = origin_loc
+
+        self.rewritings = []
+
+        self.content = annotation_str[(annotation_str.index("(") + 1):][::-1]
+        self.content = self.content[(self.content.index(")") + 1):][::-1]
+
+
+
 
         self.restricted_f = []
         self.storage_slot_map = {}
@@ -512,6 +539,14 @@ class SetRestrictionAnnotation(Annotation):
 
     def get_violations_description(self): # Returns a tuple or list of tuples with description, assoviated line and string to highlight.
         raise NotImplementedError("Abstract function of Annotation abstraction")
+
+
+    def get_annotation_description(self):
+        return "This annotation binds a restriction to one or more member variables in the contract and uses symbolic " \
+               "execution to find executions were this restriction is violated. If the annotation is inside of a single" \
+               " member variable declaration statement, the restriction is bound only to that variable. If not it applies" \
+               "to all variables declared in the same line. \n This annotation restricts setting values or content of certain " \
+               "variables to the specified function names or signatures: \n" + self.content
 
 
 

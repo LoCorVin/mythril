@@ -178,6 +178,7 @@ def main():
             if args.graph and len(args.solidity_file) > 1:
                 exit_with_error(args.outform,
                                 "Cannot generate call graphs from multiple input files. Please do it one at a time.")
+            changed_files = args.solidity_file
             if args.annotations:
                 annotary = Annotary(solc_args=args.solc_args)
                 annotary.create_tmp_dir()
@@ -186,8 +187,9 @@ def main():
 
                 # create new subdirectory
                 # change working direktory or append path to current source files
-                # do necessary conversions of filenames            
-            address, _ = mythril.load_from_solidity(args.solidity_file)  # list of files
+                # do necessary conversions of filenames
+                changed_files = [annotary.tmp_dir + "/" + (file[file.rfind("/")+1:] if "/" in file else file) for file in args.solidity_file]
+            address, _ = mythril.load_from_solidity(changed_files)  # list of files
         else:
             exit_with_error(args.outform,
                             "No input bytecode. Please provide EVM code via -c BYTECODE, -a ADDRESS, or -i SOLIDITY_FILES")

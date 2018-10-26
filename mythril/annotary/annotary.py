@@ -28,6 +28,7 @@ from shutil import rmtree, copy
 from re import findall, DOTALL
 from functools import reduce
 from mythril.annotary.debugc import printd
+import getpass
 
 from json import dumps
 
@@ -42,6 +43,8 @@ class SolidityFunction:
 
     def __init__(self, f_ast, calldata_name_map):
         attributes = f_ast['attributes']
+
+
 
 
         self.constant = attributes['constant']
@@ -171,7 +174,7 @@ class Annotary:
     def __init__(self, solc_args):
         self.solc_args = solc_args
 
-        self.wd = getcwd()
+        self.wd = "/tmp/annotary"
         self.tmp_dir = None
         self.annotation_map = {}
         self.annotated_contracts = []
@@ -183,19 +186,22 @@ class Annotary:
 
         if exists(self.tmp_dir) and isdir(self.tmp_dir):
             rmtree(self.tmp_dir)
-        makedirs(tmp_dir_name)
+        makedirs(self.tmp_dir)
 
     def copy_files_to_tmp(self, files):
         for file in files:
             dirna = dirname(file)
             if dirna and not exists(dirna):
                 makedirs(dirna)
-            copy(file, self.tmp_dir + "/" + file)
+            filename = file
+            if "/" in filename:
+                filename = filename[filename.rfind("/")+1:]
+            copy(file, self.tmp_dir + "/" + filename)
             if file.endswith(".sol"):
-                code = get_code(self.tmp_dir + "/" + file)
+                code = get_code(self.tmp_dir + "/" + filename)
                 code = replace_comments_with_whitespace(code)
-                write_code(self.tmp_dir + "/" + file, code)
-                comment_out_annotations(self.tmp_dir + "/" + file)
+                write_code(self.tmp_dir + "/" + filename, code)
+                comment_out_annotations(self.tmp_dir + "/" + filename)
 
 
     def copy_dir_content_to_tmp(self, dirpath):
