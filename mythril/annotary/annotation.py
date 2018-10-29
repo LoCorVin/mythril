@@ -19,6 +19,7 @@ annotation_kw = ["check", "invariant", "set_restricted", "ethersink", "ethersour
 
 
 def comment_out_annotations(filename):
+    annotation_starts = []
     with open(filename, 'r') as file:
         filedata = file.read()
     for kw in annotation_kw:
@@ -28,11 +29,13 @@ def comment_out_annotations(filename):
             if filedata[end_idx] == "(":
                 end_idx = find_matching_closed_bracket(filedata, end_idx) + 1
 
+            annotation_starts.append((kw_idx.start(), kw_idx.start() - 4 * len(annotation_starts)))
             filedata = filedata[:kw_idx.start()] + "/*" + filedata[kw_idx.start():end_idx] + "*/" + filedata[end_idx:]
 
     printd(filedata)
     with open(filename, 'w') as file:
         file.write(filedata)
+    return annotation_starts
 
 
 def recomment_annotations(filename):
@@ -53,7 +56,7 @@ def recomment_annotations(filename):
 
 
 def get_origin_pos_line_col(text): # Todo attentions, new commenting out
-    return get_pos_line_col(text.replace(ANNOTATION_START_REPLACEMENT_NEW, ANNOTATION_START))
+    return get_pos_line_col(text.replace(ANNOTATION_START_REPLACEMENT_NEW, ANNOTATION_START).replace("*/", ""))
 
 
 def get_annotation_content(code, content_start):
@@ -92,24 +95,25 @@ def get_annotated_members(contract, code, start, annotation_length):
 
 
 
-def init_annotation(contract, code, head, kw, start, end):
+def init_annotation(contract, code, head, kw, start, end, origin):
     if kw == "check":
         content, content_prefix = get_annotation_content(code, start + len(head))
-        return CheckAnnotation(code[start:(end + content_prefix)] + content + ")", get_pos_line_col(code[:start]), get_origin_pos_line_col(code[:start]))
+        return CheckAnnotation(code[start:(end + content_prefix)] + content + ")", get_pos_line_col(code[:start]), origin)
     elif kw == "invariant":
         content, content_prefix = get_annotation_content(code, start + len(head))
-        return InvariantAnnotation(contract, code[start:(end + content_prefix)] + content + ")", get_pos_line_col(code[:start]), get_origin_pos_line_col(code[:start]))
+        return InvariantAnnotation(contract, code[start:(end + content_prefix)] + content + ")", get_pos_line_col(code[:start]), origin)
     elif kw == "set_restricted":
         content, content_prefix = get_annotation_content(code, start + len(head))
         member_vars = get_annotated_members(contract, code, start, len(head + content) + 2)
         return SetRestrictionAnnotation(contract, code[start:(end + content_prefix)] + content + ")", content,
-                member_vars, get_pos_line_col(code[:start]), get_origin_pos_line_col(code[:start]))
+                member_vars, get_pos_line_col(code[:start]), origin)
 
     elif kw == "ethersink":
         pass
 
     elif kw == "ethersource":
         pass
+
 
 def increase_rewritten_pos(ano_rewritings, rewriting, nwl_type="\n"):
     for ano_rewriting in ano_rewritings:
@@ -123,12 +127,15 @@ def increase_rewritten_pos(ano_rewritings, rewriting, nwl_type="\n"):
                 else:
                     ano_rewriting.col += len(rewriting.text)
 
+
 def is_mapping_inside_rew(mapping, rewriting):
     return is_mapping_inside_range(mapping, rewriting.pos, rewriting.pos + len(rewriting.text))
+
 
 def is_mapping_inside_range(mapping, start_pos, end_pos):
     # mapping.lineno == rewriting.line and
     return mapping.offset >= start_pos and mapping.offset < end_pos and mapping.length + mapping.offset <= end_pos
+
 
 def get_status_string(status):
     if status == Status.HSINGLE:
@@ -144,6 +151,7 @@ def get_status_string(status):
     elif status == Status.UNCHECKED:
         return "unchecked"
 
+
 class Status(Enum):
     HOLDS = 1 # SAT solver did not find any possible violation
     UNCHECKED = 2 # Execution still has to run
@@ -158,9 +166,11 @@ class Status(Enum):
 
 class Violation:
 
-    def __init__(self, violation, src_mapping, contract, additional = None, length=None, vio_description=""):
+    def __init__(self, violation, src_mapping, contract, additional = None, length=None, vio_description="", rew_based=True):
         self.vio_description = vio_description
         self.trace = TransactionTrace(violation, contract)
+
+        self.rew_based = rew_based
 
         self.src_mapping = src_mapping
         self.src_info = contract.get_source_info_from_mapping(self.src_mapping)
@@ -179,12 +189,17 @@ class Violation:
         self.contract = contract
         self.additional = additional
 
-
-    def get_dictionary(self):
+    def get_dictionary(self, annotation_contract):
+        origin_file_code = annotation_contract.origin_file_code
+        length_prefix_rew = 0
+        for rewriting in annotation_contract.rewritings:
+            if rewriting.pos <= self.offset:
+                length_prefix_rew += len(rewriting.text)
+        loc = get_origin_pos_line_col(origin_file_code[:self.offset-length_prefix_rew + (len(self.code) if self.rew_based else 0)])
 
         return {"level": get_status_string(self.status), "lvl_description": self.get_lvl_description(),
-                "filename": self.filename, "lineno": self.lineno, "code": self.code,
-                "length": self.length, "offset": self.offset,
+                "filename": self.filename, "row": loc[1], "col": loc[2], "code": self.code,
+                "length": 1 if self.rew_based else self.length, "pos": loc[0],
                 "vio_description": self.vio_description, "transaction_depth": self.trace.lvl,
                 "chained_functions": [{"name": func.name, "signature": func.signature} for func in self.trace.functions]}
 
@@ -213,7 +228,7 @@ class Annotation:
 
         self.viol_rews = [] # List of rewritings that contain code to be traceless in the symbolic execution
 
-        # Todo These may not be necessary for the rest of the execution as enter, exit and violating instr. define enough
+        # Todo These may not be necessary for the rest of the execution as enter, exit and violating instr.define enough
         self.viol_rew_instrs = [] # list of instructions lists that are associated to the rewriting in the same position
 
         self.viol_inst = [] # Single instruction that triggers the violation through 'ASSERT_FAIL'
@@ -224,7 +239,8 @@ class Annotation:
 
         self.anotation_contract = None
 
-    def rewrite_code(self, code): # In the default case it returns '' empty string, to delete it before handing it over to the compiler
+    def rewrite_code(self, code):
+        # In the default case it returns '' empty string, to delete it before handing it over to the compiler
         raise NotImplementedError("Abstract function of Annotation abstraction")
 
     def set_annotation_contract(self, annotation_contract):
@@ -298,11 +314,11 @@ class Annotation:
         adict = {"title": self.title, "level": get_status_string(self.status), "lvl_description": self.get_lvl_description(),
                  "ano_description": self.get_annotation_description(), "pos": self.origin[0], "line": self.origin[1], "col": self.origin[2],
                  "ano_string": self.annotation_str, "length": len(self.annotation_str),
-                 "violations": [violation.get_dictionary() for violation in self.violations]}
+                 "violations": [violation.get_dictionary(self.annotation_contract) for violation in self.violations]}
         return adict
 
-    def add_violations(self, violations, src_mapping, contract, additional=None, length=None, vio_description=""): # Ads new violations to this annotation and sets the status, can be called multiple times
-        self.violations.extend([Violation(violation, src_mapping, contract, additional, length, vio_description) for violation in violations])
+    def add_violations(self, violations, src_mapping, contract, additional=None, length=None, vio_description="", rew_based=True): # Ads new violations to this annotation and sets the status, can be called multiple times
+        self.violations.extend([Violation(violation, src_mapping, contract, additional, length, vio_description, rew_based) for violation in violations])
         self.status = Status.HSINGLE if self.violations else Status.HOLDS
 
     def get_creation_ignore_list(self):
@@ -531,7 +547,7 @@ class SetRestrictionAnnotation(Annotation):
                                     new_state.mstate.constraints.extend(constraints)
                                 self.add_violations([new_state], mapping, self.contract, member_name,
                                     vio_description="This statement may write to the member variable '" + storage_slot.member.name
-                                                    + "' of type '" + storage_slot.member.type+"' although not allowed by the annotation: " + str(self.annotation_str))
+                                                    + "' of type '" + storage_slot.member.type+"' although not allowed by the annotation: " + str(self.annotation_str), rew_based=False)
 
 
     def trans_violations_check(self, sym_tran, sym_con): # Or should i get the predfiltered transaction or even builded chains here

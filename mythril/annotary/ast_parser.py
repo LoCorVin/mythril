@@ -1,7 +1,10 @@
 
 def get_last_child(obj):
     if type(obj) == dict:
-        return obj['children'][-1]
+        if len(obj['children']):
+            return obj['children'][-1]
+        else:
+            return None
     raise RuntimeError("No children to retrieve the last one")
 
 def is_last_stmt_a_return(f_def):
@@ -12,7 +15,7 @@ def is_last_stmt_a_return(f_def):
     if not block:
         raise RuntimeError("Function has no block in ast")
     last_child = get_last_child(block)
-    return last_child['name'] == 'Return'
+    return last_child and last_child['name'] == 'Return'
 
 
 def get_dict_containing_k(obj, key):

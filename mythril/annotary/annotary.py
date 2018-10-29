@@ -3,7 +3,6 @@ from ethereum import utils
 from mythril.analysis.symbolic import SymExecWrapper
 from mythril.support.loader import DynLoader
 from mythril.ether.soliditycontract import SolidityContract
-import mythril.laser.ethereum.util as helper
 from mythril.laser.ethereum.state import MachineState, GlobalState, Account, Environment, CalldataType
 from mythril.laser.ethereum.transaction import ContractCreationTransaction
 
@@ -22,13 +21,13 @@ from mythril.annotary.transchainstrategy import BackwardChainStrategy
 
 from z3 import BitVec,eq
 from os.path import exists, isdir, dirname, isfile, join
-from os import makedirs, chdir, listdir, getcwd
+from os import makedirs, chdir, listdir
 from re import finditer, escape
 from shutil import rmtree, copy
-from re import findall, DOTALL
+from re import DOTALL
 from functools import reduce
 from mythril.annotary.debugc import printd
-import getpass
+from mythril.annotary.annotation import get_origin_pos_line_col
 
 from json import dumps
 
@@ -100,11 +99,13 @@ def find_all(a_str, sub):
         yield start
         start += len(sub)
 
+
 def count_elements(source, elements):
     ret = 0
     for element in elements:
         ret += source.count(element)
     return ret
+
 
 def replace_index(text, toReplace, replacement, index):
     return text[:index] + replacement + text[(index + len(toReplace)):]
@@ -121,12 +122,10 @@ def get_containing_file(contract):
     return containing_file
 
 
-
-
-"""
-    Parses the ast to find all positions where a contract might terminate with a transactions execution.
-"""
 def augment_with_ast_info(contract):
+    """
+        Parses the ast to find all positions where a contract might terminate with a transactions execution.
+    """
     contract.functions = []
     contract_file = get_containing_file(contract)
     ast = contract_file.ast
@@ -146,6 +145,7 @@ def find_contract_idx_range(contract):
     end_contract = find_matching_closed_bracket(containing_file.data, end_head)
     return start_head, end_head, end_contract
 
+
 def get_sorting_priority(rew_text):
     if rew_text == "{":
         return 0
@@ -161,6 +161,7 @@ def get_sorting_priority(rew_text):
         return 5
     return 6
 
+
 def get_contract_code(contract):
     crange = find_contract_idx_range(contract)
     contract_code = get_containing_file(contract).data[crange[0]:crange[2]]
@@ -174,10 +175,12 @@ class Annotary:
     def __init__(self, solc_args):
         self.solc_args = solc_args
 
-        self.wd = "/tmp/annotary"
+        self.wd = "/tmp"
         self.tmp_dir = None
         self.annotation_map = {}
         self.annotated_contracts = []
+
+        self.origin_file = {}
 
         self.storage_map = {}
 
@@ -201,8 +204,7 @@ class Annotary:
                 code = get_code(self.tmp_dir + "/" + filename)
                 code = replace_comments_with_whitespace(code)
                 write_code(self.tmp_dir + "/" + filename, code)
-                comment_out_annotations(self.tmp_dir + "/" + filename)
-
+                self.origin_file[self.tmp_dir + "/" + filename] = comment_out_annotations(self.tmp_dir + "/" + filename)
 
     def copy_dir_content_to_tmp(self, dirpath):
         src_files = listdir(dirpath)
@@ -233,16 +235,14 @@ class Annotary:
             self.storage_map[contract.name] = extract_storage_map(contract, struct_map)
             contract.storage_map = self.storage_map[contract.name]
 
-
-            code = get_containing_file(contract).data
-            contract_range = find_contract_idx_range(contract)
-            contract.contract_range = contract_range
-            code = code[contract_range[0]:contract_range[2]]
+            contract_file = get_containing_file(contract)
+            contract.contract_range = find_contract_idx_range(contract)
+            code = contract_file.data[contract.contract_range[0]:contract.contract_range[2]]
 
 
             augment_with_ast_info(contract)
             for function in contract.functions:
-                function.terminating_pos = list(map(lambda pos: (pos[0] - contract_range[0], pos[1]), function.terminating_pos))
+                function.terminating_pos = list(map(lambda pos: (pos[0] - contract.contract_range[0], pos[1]), function.terminating_pos))
 
             for kw in annotation_kw:
                 annot_iterator = finditer(escape('/*@') + escape(kw), code)
@@ -250,8 +250,8 @@ class Annotary:
                 if annot_iter and contract.name not in self.annotation_map:
                     self.annotation_map[contract.name] = []
                 while annot_iter:
-                    
-                    annotation = init_annotation(contract, code, annot_iter.group(), kw, annot_iter.start(), annot_iter.end())
+                    origin = get_origin_pos_line_col(contract_file.data[:contract.contract_range[0]+annot_iter.start()])
+                    annotation = init_annotation(contract, code, annot_iter.group(), kw, annot_iter.start(), annot_iter.end(), origin)
                     if annotation:
                         self.annotation_map[contract.name].append(annotation)
                     annot_iter = next(annot_iterator, None)
@@ -308,12 +308,15 @@ class Annotary:
             #printd("----")
             write_code(sol_file.filename, rew_file_code)
 
-            anotation_contract = SolidityContract(sol_file.filename, contract.name, solc_args=self.solc_args)
-            augment_with_ast_info(anotation_contract)
-            self.annotated_contracts.append(anotation_contract)
+            annotation_contract = SolidityContract(sol_file.filename, contract.name, solc_args=self.solc_args)
+            augment_with_ast_info(annotation_contract)
+            annotation_contract.rewritings = rewritings
+            # Todo maybe i dont need this
+            annotation_contract.origin_file_code = origin_file_code
+            self.annotated_contracts.append(annotation_contract)
 
             for annotation in self.annotation_map[contract.name]:
-                annotation.set_annotation_contract(anotation_contract)
+                annotation.set_annotation_contract(annotation_contract)
 
             write_code(sol_file.filename, origin_file_code)
 
