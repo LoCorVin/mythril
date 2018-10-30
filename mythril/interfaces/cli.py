@@ -40,6 +40,10 @@ def main():
 
     commands.add_argument('-n', '--annotations', action='store_true',
                           help='detect broken annotations, used with solidity file(s)')
+
+    commands.add_argument('-cn', '--contract-name',
+                          help='Specify the contract by name who\'s annotations should be checked.', metavar='cname')
+
     commands.add_argument('-t', '--truffle', action='store_true',
                           help='analyze a truffle project (run from project dir)')
     commands.add_argument('-d', '--disassemble', action='store_true', help='print disassembly')
@@ -241,6 +245,9 @@ def main():
         if args.annotations:
             if not mythril.contracts:
                 exit_with_error(args.outform, "input files do not contain any valid contracts")
+            if args.contract_name:
+                annotary.set_contract_name(args.contract_name)
+
 
             annotary.provide_resources(mythril.contracts, address, mythril.eth, mythril.dynld, mythril.sigs)
             annotary.parse_annotations()

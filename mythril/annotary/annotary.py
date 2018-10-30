@@ -177,6 +177,7 @@ class Annotary:
 
         self.wd = "/tmp"
         self.tmp_dir = None
+        self.contract_name = None
         self.annotation_map = {}
         self.annotated_contracts = []
 
@@ -190,6 +191,9 @@ class Annotary:
         if exists(self.tmp_dir) and isdir(self.tmp_dir):
             rmtree(self.tmp_dir)
         makedirs(self.tmp_dir)
+
+    def set_contract_name(self, contract_name):
+        self.contract_name = contract_name
 
     def copy_files_to_tmp(self, files):
         for file in files:
@@ -230,6 +234,8 @@ class Annotary:
         struct_map = get_struct_map(flatten([contract.solidity_files for contract in self.contracts]))
         # Todo from which contract to parse?
         for contract in self.contracts:
+            if self.contract_name and contract.name != self.contract_name:
+                continue
 
             # Todo Saving Storage Mapping with mappings in contract might not be necessary
             self.storage_map[contract.name] = extract_storage_map(contract, struct_map)
