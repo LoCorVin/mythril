@@ -5,6 +5,7 @@ from mythril.support.loader import DynLoader
 from mythril.ether.soliditycontract import SolidityContract
 from mythril.laser.ethereum.state import MachineState, GlobalState, Account, Environment, CalldataType
 from mythril.laser.ethereum.transaction import ContractCreationTransaction
+from mythril.laser.ethereum.instructions import keccac_map
 
 from mythril.annotary.sn_utils import get_sourcecode_and_mapping, flatten
 from mythril.annotary.transactiontrace import TransactionTrace
@@ -17,6 +18,8 @@ from mythril.annotary.annotation import annotation_kw, init_annotation, increase
 from mythril.annotary.ast_parser import get_contract_ast, get_function_asts, get_function_param_tuples, get_function_term_positions, get_struct_map
 from mythril.annotary.storage_members import extract_storage_map
 
+from mythril.annotary.config import Config
+
 from mythril.annotary.transchainstrategy import BackwardChainStrategy
 
 from z3 import BitVec,eq
@@ -27,7 +30,7 @@ from shutil import rmtree, copy
 from re import DOTALL
 from functools import reduce
 from mythril.annotary.debugc import printd
-from mythril.annotary.annotation import get_origin_pos_line_col
+from mythril.annotary.annotation import get_origin_pos_line_col, Status
 
 from json import dumps
 
@@ -48,7 +51,7 @@ class SolidityFunction:
 
         self.constant = attributes['constant']
         self.implemented = attributes['implemented']
-        self.modifiers = attributes['modifiers']
+        self.modifiers = attributes['modifiers'] if 'modfiers' in attributes else None
         self.payable =  attributes['payable']
         self.stateMutability = attributes['stateMutability']
         self.visibility = attributes['visibility']
@@ -129,6 +132,7 @@ def augment_with_ast_info(contract):
     contract.functions = []
     contract_file = get_containing_file(contract)
     ast = contract_file.ast
+
     contract.ast = get_contract_ast(ast, contract.name) # Attention, here we write over a already filled variable
     f_asts = get_function_asts(contract.ast)
     contract.calldata_name_map = get_calldata_name_map(abi_json_to_abi(contract.abi))
@@ -172,8 +176,13 @@ def get_contract_code(contract):
 
 class Annotary:
 
-    def __init__(self, solc_args):
+    def __init__(self, solc_args, config_file):
+
+        self.filename_map = {} # from tmp filename to original filename
+
         self.solc_args = solc_args
+
+        self.config = Config(config_file)
 
         self.wd = "/tmp"
         self.tmp_dir = None
@@ -209,6 +218,7 @@ class Annotary:
                 code = replace_comments_with_whitespace(code)
                 write_code(self.tmp_dir + "/" + filename, code)
                 self.origin_file[self.tmp_dir + "/" + filename] = comment_out_annotations(self.tmp_dir + "/" + filename)
+                self.filename_map[self.tmp_dir + "/" + filename] = file
 
     def copy_dir_content_to_tmp(self, dirpath):
         src_files = listdir(dirpath)
@@ -237,9 +247,6 @@ class Annotary:
             if self.contract_name and contract.name != self.contract_name:
                 continue
 
-            # Todo Saving Storage Mapping with mappings in contract might not be necessary
-            self.storage_map[contract.name] = extract_storage_map(contract, struct_map)
-            contract.storage_map = self.storage_map[contract.name]
 
             contract_file = get_containing_file(contract)
             contract.contract_range = find_contract_idx_range(contract)
@@ -247,6 +254,11 @@ class Annotary:
 
 
             augment_with_ast_info(contract)
+
+            # Todo Saving Storage Mapping with mappings in contract might not be necessary
+            self.storage_map[contract.name] = extract_storage_map(contract, struct_map)
+            contract.storage_map = self.storage_map[contract.name]
+
             for function in contract.functions:
                 function.terminating_pos = list(map(lambda pos: (pos[0] - contract.contract_range[0], pos[1]), function.terminating_pos))
 
@@ -353,6 +365,8 @@ class Annotary:
         constr_calldata_len = get_minimal_constructor_param_encoding_len(abi_json_to_abi(contract.abi))
         sym_code_extension = SymbolicCodeExtension("calldata", contract.name, constr_calldata_len)
 
+        global keccac_map
+        keccac_map = {}
         sym_transactions = SymExecWrapper(contract, self.address, laser_strategy, dynloader, max_depth=self.max_depth,
                                           prepostprocessor=annotationsProcessor, code_extension=sym_code_extension) # Todo Mix the annotation Processors or mix ignore listst
         printd("Construction Violations: " + str(len(reduce(lambda x, y: x + y, annotationsProcessor.create_violations, []))))
@@ -406,9 +420,19 @@ class Annotary:
         # Chaining and status update until all have fixed states or a certain limit is reached
         for contract in self.annotated_contracts:
             annotations = self.annotation_map[contract.name]
-            chain_strat = BackwardChainStrategy(contract.const_traces, contract.trans_traces, annotations)
+            chain_strat = BackwardChainStrategy(contract.const_traces, contract.trans_traces, annotations, self.config)
             printd("Start")
-            chain_strat.check_violations()
+
+            if self.config.depth > 0 and self.config.chain_verification:
+                chain_strat.check_violations()
+
+            for annotation in annotations:
+                status = annotation.status
+                for violation in annotation.violations:
+                    if violation.status.value > status.value:
+                        status = violation.status
+                annotation.status = status
+
             printd("Stop")
         # Todo Maybe filter violations if the annotation is only broken if it was broken before
 
@@ -416,8 +440,9 @@ class Annotary:
 
         # Todo Return the annotations with violation information
 
+
     def get_annotation_json(self):
-        return dumps({contract_name: [annotation.get_dictionary() for annotation in annotations] for contract_name,
+        return dumps({contract_name: [annotation.get_dictionary(self.filename_map) for annotation in annotations] for contract_name,
                                                 annotations in self.annotation_map.items()}, sort_keys=True, indent=4)
 
 
@@ -440,7 +465,7 @@ class Annotary:
 def is_storage_primitive(storage): # Todo If concrete storage gives the value 0 to all unknown lookup values, trace combination has to consider that for the constructor
     if storage:
         for index, content in storage._storage.items():
-            if not eq(content, BitVec("storage[" + str(index) + "]", 256)): # Todo See and adapt storage indexing
+            if isinstance(content, int) or not eq(content, BitVec("storage[" + str(index) + "]", 256)): # Todo See and adapt storage indexing
                 return False
     return True
 

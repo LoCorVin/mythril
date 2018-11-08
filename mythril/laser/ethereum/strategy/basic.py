@@ -22,7 +22,6 @@ class DepthFirstSearchStrategy:
             # By taking the last element we effectively pick the "newest" states, which amounts to dfs
             global_state = self.work_list.pop()
             if global_state.mstate.depth >= self.max_depth:
-                print("Max depth reached, stopping")
                 return self.__next__()
             return global_state
         except IndexError:
@@ -48,7 +47,6 @@ class BreadthFirstSearchStrategy:
             # By taking the first element we effectively pick the "oldest" states, which amounts to bfs
             global_state = self.work_list.pop(0)
             if global_state.mstate.depth >= self.max_depth:
-                print("Max depth reached, stopping")
                 return self.__next__()
             return global_state
         except IndexError:

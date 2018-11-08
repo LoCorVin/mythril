@@ -44,6 +44,10 @@ def main():
     commands.add_argument('-cn', '--contract-name',
                           help='Specify the contract by name who\'s annotations should be checked.', metavar='cname')
 
+
+    commands.add_argument('-cf', '--config_file',
+                          help='Allows to specify a config file to set configurations for the annotary analysis', metavar='config_file')
+
     commands.add_argument('-t', '--truffle', action='store_true',
                           help='analyze a truffle project (run from project dir)')
     commands.add_argument('-d', '--disassemble', action='store_true', help='print disassembly')
@@ -184,7 +188,7 @@ def main():
                                 "Cannot generate call graphs from multiple input files. Please do it one at a time.")
             changed_files = args.solidity_file
             if args.annotations:
-                annotary = Annotary(solc_args=args.solc_args)
+                annotary = Annotary(solc_args=args.solc_args, config_file=args.config_file)
                 annotary.create_tmp_dir()
                 annotary.copy_files_to_tmp(args.solidity_file)
                 annotary.enter_tmp_dir()

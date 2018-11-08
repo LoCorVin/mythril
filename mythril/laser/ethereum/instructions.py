@@ -1,6 +1,7 @@
 import binascii
 import logging
 from copy import copy, deepcopy
+from z3 import BitVecRef
 
 import ethereum.opcodes as opcodes
 from ethereum import utils
@@ -14,6 +15,8 @@ from mythril.laser.ethereum.call import get_call_parameters
 from mythril.laser.ethereum.state import GlobalState, MachineState, Environment, CalldataType
 import mythril.laser.ethereum.natives as natives
 from mythril.laser.ethereum.transaction import MessageCallTransaction, TransactionEndSignal, TransactionStartSignal, ContractCreationTransaction
+
+keccac_map = {}
 
 TT256 = 2 ** 256
 TT256M1 = 2 ** 256 - 1
@@ -167,8 +170,12 @@ class Instruction:
     # Arithmetic
     @instruction
     def add_(self, global_state):
-        global_state.mstate.stack.append(
-            (helper.pop_bitvec(global_state.mstate) + helper.pop_bitvec(global_state.mstate)))
+        op1, op2 = helper.pop_bitvec(global_state.mstate), helper.pop_bitvec(global_state.mstate)
+
+        # Augmentation to backtrace hash computations
+        if str(op1).replace("\n", "") in keccac_map or str(op2).replace("\n", "") in keccac_map:
+            keccac_map[str(simplify(op1+op2)).replace("\n", "")] = op1 + op2
+        global_state.mstate.stack.append(op1 + op2)
         return [global_state]
 
     @instruction
@@ -512,18 +519,59 @@ class Instruction:
                 i += 1
             # FIXME: broad exception catch
         except:
+            data = b''
+            last = 0
+            result = None
+            i = index
+            while i < index + length:
+                if type(state.memory[i]) == BitVecRef:
+                    if i - last > 0:
+                        if result == None:
+                            result = BitVecVal(util.concrete_int_from_bytes(data, 0), len(data)*8)
+                        else:
+                            result = Concat(result, BitVecVal(util.concrete_int_from_bytes(data, 0), len(data)*8)) # Todo decide on concat order
 
-            svar = str(state.memory[index])
+                        result = Concat(result, state.memory[i])
+                    else:
+                        result = state.memory[i]
+                    data = b''
+                    i += 32 # Todo not shure whether or not to change this variably
+                    last = i
+                else:
+                    data += util.get_concrete_int(state.memory[i]).to_bytes(1, byteorder='big')
+                    i += 1
+            if len(data) > 0:
+                if result == None:
+                    result = BitVecVal(util.concrete_int_from_bytes(data, 0), len(data)*8)
+                else:
+                    result = Concat(result, BitVecVal(util.concrete_int_from_bytes(data, 0), len(data)*8))
+
+            svar = str(simplify(result))
+
 
             svar = svar.replace(" ", "_")
 
-            state.stack.append(BitVec("keccac_" + svar, 256))
+            state.stack.append(BitVec("keccac(" + svar+ ")", 256))
             return [global_state]
 
         keccac = utils.sha3(utils.bytearray_to_bytestr(data))
         logging.debug("Computed SHA3 Hash: " + str(binascii.hexlify(keccac)))
+        keccac_result = BitVecVal(util.concrete_int_from_bytes(keccac, 0), 256)
 
-        state.stack.append(BitVecVal(util.concrete_int_from_bytes(keccac, 0), 256))
+        keccac_map[str(keccac_result)] = None
+        i = 0
+        while i < length:
+            bitvec = BitVecVal(util.concrete_int_from_bytes(data, i), (len(data) - i)*8 if len(data) - i < 32 else 256 )
+            bitvec_key = str(bitvec).replace("\n", "")
+            if bitvec_key in keccac_map:
+                bitvec = keccac_map[bitvec_key]
+            if keccac_map[str(keccac_result)] is None:
+                keccac_map[str(keccac_result)] = bitvec
+            else:
+                keccac_map[str(keccac_result)] = Concat(keccac_map[str(keccac_result)], bitvec)
+            i += 32
+
+        state.stack.append(keccac_result)
         return [global_state]
 
     @instruction

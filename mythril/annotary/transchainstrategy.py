@@ -7,6 +7,9 @@ from mythril.annotary.z3utility import are_z3_satisfiable
 class AnnotationFinishedException(Exception):
     pass
 
+class ViolationFinishedException(Exception):
+    pass
+
 def get_annotation_of_violation(annotations, violation):
     for annotation in annotations:
         if violation in annotation.violations:
@@ -45,21 +48,23 @@ def zeroize_storage_vars(trace):
 
 class ChainStrategy:
 
-    def __init__(self, const_traces, trans_traces, annotations):
+    def __init__(self, const_traces, trans_traces, annotations, config):
+        self.config = config
         self.const_traces = const_traces
         self.trans_traces = trans_traces
         self.annotations = deque(annotations) # Worklist containint the annotations -> violations -> trace -> constraints&storage
 
 
         for annotation in annotations:
-            annotation.status = Status.UNCHECKED
+            annotation.status = Status.HSINGLE
             for violation in annotation.violations:
-                violation.status = Status.UNCHECKED
+                annotation.status = Status.VDEPTH
+                violation.status = Status.VDEPTH
                 trace = violation.trace
                 if not contains_storage_reference(trace):
                     violation.status = Status.VSINGLE
                     annotation.status = Status.VSINGLE
-            if annotation.status == Status.VSINGLE:
+            if annotation.status == Status.VSINGLE: # Removing this exploded the runtime
                 annotation.violations = [violation for violation in annotation.violations if violation.status == Status.VSINGLE]
                 self.annotations.remove(annotation) # removing finished annotation from the self.annotations worklist
 
@@ -80,8 +85,8 @@ class ForwardChainStrategy(ChainStrategy):
     appending was successful VCHAIN is returned together with the first encountered violation.
     """
 
-    def __init__(self, const_traces, trans_traces, annotations):
-        super(ForwardChainStrategy, self).__init__(const_traces, trans_traces, annotations)
+    def __init__(self, const_traces, trans_traces, annotations, config):
+        super(ForwardChainStrategy, self).__init__(const_traces, trans_traces, annotations, config)
 
             
 
@@ -94,52 +99,62 @@ class BackwardChainStrategy(ChainStrategy):
         worked, and no symbolic variable refers to the storage, the violation was verified.
     """
 
-    def __init__(self, const_traces, trans_traces, annotations, depth=8):
-        super(BackwardChainStrategy, self).__init__(const_traces, trans_traces, annotations)
-        self.depth = depth
+    def __init__(self, const_traces, trans_traces, annotations, config):
+        super(BackwardChainStrategy, self).__init__(const_traces, trans_traces, annotations, config)
 
     def check_violations(self):
         traces = self.const_traces + self.trans_traces
 
         while self.annotations:
             annotation = self.annotations.popleft()
-            annotation.violations = deque(annotation.violations)
+            violations = deque(annotation.violations)
+            printd(annotation.annotation_str)
             try:
-                while annotation.violations:
-                    violation = annotation.violations.popleft()
+                while violations:
+                    violation = violations.popleft()
                     vts = deque([violation.trace])
-                    for i in range(self.depth):
-                        new_vs = []
-                        while vts:
-                            v = vts.popleft()
-                            for t in traces:
-                                is_const = False
-                                vt_new = t.apply_trace(v)
-                                if t in self.const_traces:
-                                    is_const = True
-                                    zeroize_storage_vars(t)
-                                if not contains_storage_reference(vt_new):
-                                    if are_z3_satisfiable([constraint.constraint for constraint in vt_new.tran_constraints]):
-                                        if is_const:
-                                            printd("ConstOriginChain")
+                    try:
+                        for i in range(self.config.depth):
+                            new_vs = []
+                            while vts:
+                                v = vts.popleft()
+                                for t in traces:
+                                    is_const = False
+                                    vt_new = t.apply_trace(v)
+                                    if t in self.const_traces:
+                                        is_const = True
+                                        zeroize_storage_vars(t)
+                                    if not contains_storage_reference(vt_new):
+                                        if are_z3_satisfiable([constraint.constraint for constraint in vt_new.tran_constraints]):
+                                            if is_const:
+                                                printd("ConstOriginChain")
+                                            else:
+                                                printd("IndiChain")
+                                            violation.trace = vt_new
+                                            violation.status = Status.VCHAIN
+                                            # annotation.status = Status.VCHAIN
+                                            # annotation.violations = [violation]
+                                            raise ViolationFinishedException()
                                         else:
-                                            printd("IndiChain")
-                                        violation.trace = vt_new
-                                        violation.status = Status.VCHAIN
-                                        annotation.status = Status.VCHAIN
-                                        annotation.violations = [violation]
-                                        raise AnnotationFinishedException()
-                                else:
-                                    new_vs.append(vt_new)
-                        if not new_vs:
-                            annotation.violations = []
-                            annotation.status = Status.HOLDS
-                            raise AnnotationFinishedException()
-                        else:
-                            vts = deque(new_vs)
-                    if vts:
-                        violation.status = Status.VDEPTH
-                        violation.trace = vts
-                        annotation.status = Status.VDEPTH
-            except AnnotationFinishedException as v:
+                                            printd("Constraints not Satisfiable")
+
+                                    else:
+                                        new_vs.append(vt_new)
+                            if not new_vs:
+                                # annotation.violations = []
+                                violation.trace = None
+                                violation.status = Status.HOLDS
+
+                                # annotation.status = Status.HOLDS
+
+                                raise ViolationFinishedException()
+                            else:
+                                vts = deque(new_vs)
+                        if vts:
+                            violation.status = Status.VDEPTH
+                            violation.trace = vts[0] # Take the first of the remaining traces
+                            # annotation.status = Status.VDEPTH
+                    except ViolationFinishedException as v:
+                        pass
+            except AnnotationFinishedException as a:
                 pass

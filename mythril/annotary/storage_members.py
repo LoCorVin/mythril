@@ -1,8 +1,15 @@
 from mythril.annotary.ast_parser import get_contract_storage_members
+from mythril.annotary.codeparser import find_matching_closed_bracket
 from functools import reduce
 from mythril.annotary.z3utility import are_z3_satisfiable
 from z3 import eq, BitVecVal, BitVec, Extract, Not, simplify
 from mythril.laser.ethereum.util import get_concrete_int
+from mythril.laser.ethereum.instructions import keccac_map
+from re import finditer
+
+from ethereum import utils
+from mythril.laser.ethereum import util
+from .z3utility import extract_sym_names
 
 type_alias = {"address": "int160", "bool": "int8", "byte": "bytes1", "ufixed": "ufixed128x18", "fixed": "fixed128x18",
               "int": "int256", "uint":"uint256"}
@@ -73,8 +80,15 @@ class ConcretSlot(StorageSlot):
 
         index_str = str(z3_index)
         # Rule out keccak symbolic variable as the function prevents someone from arbitrarily controlling the index
-        if len(z3_index.children()) < 2 and index_str.startswith("keccak"):
+
+        if len(z3_index.children()) < 2 and index_str.startswith("keccac"):
             return False, None # Todo Here I might do something more elaborate if I see that it does actually not solve critical writings
+
+        # Problem because writing to an array has a keccak offset, but if the index can be arbitrarely choosen z3 finds
+        # a solution for the controllable symbolic variable to match the index to any slot.
+        #sym_ind_name = extract_sym_names(z3_index)
+        #if any([name for name in sym_ind_name if name.startswith("keccak")]) and any([name for name in sym_ind_name if not name.startswith("keccak")]):
+        #    return False, None
 
         # If the slot is or may be the same and the slot we currently analyze is the same, we found a possible write
         if self.bitlength == 256:
@@ -109,7 +123,28 @@ class MappingSlot(StorageSlot):
 
     def may_write_to(self, z3_index, z3_value, storage, constraint_list):
         # write keccak(...) check if it contains the slot keccak needs the
-        pass
+        z3_index = simplify(z3_index)
+        z3_index_str = str(z3_index).replace("\n", "")
+        if "keccac(Concat(" in z3_index_str:
+            for match in finditer(r'keccac\(Concat\(', z3_index_str ):
+                match_str = z3_index_str[match.start():]
+                match_str = match_str[len("keccac(Concat("):find_matching_closed_bracket(match_str, len("keccac(Concat"))]
+                if not "keccac(" in match_str:
+                    if str(match_str).endswith(",_" + str(self.slot_counter)):
+                        return True, [] # Found store with unresolved keccac-references
+
+        if z3_index_str in keccac_map:
+            unresolved_index = keccac_map[str(z3_index).replace("\n" , "")]
+            unresolved_index = str(unresolved_index).replace("\n", "")
+            if "Concat(" in unresolved_index:
+                for match in finditer(r'Concat\(', unresolved_index):
+                    match_str = unresolved_index[match.start():]
+                    match_str = match_str[
+                                len("Concat("):find_matching_closed_bracket(match_str, len("Concat"))]
+                    if not "Concat(" in match_str:
+                        if str(match_str).endswith(", " + str(self.slot_counter)):
+                            return True, [] # Found store with solved
+        return False, []
 
     def may_read_from(self, z3_index, z3_value, storage, constraint_list):
         pass
@@ -122,7 +157,22 @@ class ArraySlot(StorageSlot):
 
     def may_write_to(self, z3_index, z3_value, storage, constraint_list):
         # write keccak(...) + index consider constraint
-        pass
+
+        slot_hash = utils.sha3(utils.bytearray_to_bytestr(util.concrete_int_to_bytes(self.slot_counter)))
+        slot_hash = str(BitVecVal(util.concrete_int_from_bytes(slot_hash, 0), 256))
+
+
+        z3_index_str = str(z3_index).replace("\n", "")
+        if z3_index_str.startswith(slot_hash):
+            if z3_index_str.endswith(slot_hash) or z3_index_str[len(slot_hash):].startswith(" +"):
+                return True, []
+        if z3_index_str in keccac_map:
+            unresolved_index = keccac_map[str(z3_index).replace("\n" , "")]
+            unresolved_index = str(unresolved_index).replace("\n", "")
+            if unresolved_index.startswith(str(self.slot_counter)):
+                if unresolved_index.endswith(str(self.slot_counter)) or unresolved_index[len(str(self.slot_counter)):].startswith(" +"):
+                    return True, []
+        return False, []
 
     def may_read_from(self, z3_index, z3_value, storage, constraint_list):
         pass
@@ -176,14 +226,21 @@ def add_counters(slot_counter, bit_counter, needed_bits):
 
 def get_primitive_storage_mapping(slot_counter, bit_counter, needed_bits):
     mappings = []
+
+    if needed_bits > 256 - bit_counter:
+        slot_counter, bit_counter = advance_counters(slot_counter, bit_counter)
+
     while needed_bits > 0:
-        if bit_counter == 0:
-            slot_counter -= 1
-            bit_counter = 256
-        available_needed = needed_bits if needed_bits < bit_counter else (bit_counter)
+
+        available_needed = needed_bits if needed_bits <= 256 - bit_counter else (256 - bit_counter)
         needed_bits -= available_needed
-        mappings.append(ConcretSlot(slot_counter, bit_counter - available_needed, available_needed))
-    return mappings
+        mappings.append(ConcretSlot(slot_counter, bit_counter, available_needed))
+
+    if len(mappings) > 0:
+        slot_counter, bit_counter = advance_counters(mappings[-1].slot_counter, mappings[-1].bit_counter + mappings[-1].bitlength)
+
+
+    return mappings, slot_counter, bit_counter
 
 
 
@@ -285,26 +342,30 @@ def get_storage_mapping_for_types(contract, struct_map, m_type, slot_counter=0, 
         if post == '':
             post = "256"
         post = int(post)
-        slot_counter, bit_counter = add_counters(slot_counter, bit_counter, post)
-        m_info.extend(get_primitive_storage_mapping(slot_counter, bit_counter, post))
+        mappings, slot_counter, bit_counter = get_primitive_storage_mapping(slot_counter, bit_counter, post)
+        m_info.extend(mappings)
     elif m_type.startswith("bytes"):
         byte_len = m_type[5:]
-        slot_counter, bit_counter = add_counters(slot_counter, bit_counter, byte_len * 8)
-        m_info.extend(get_primitive_storage_mapping(slot_counter, bit_counter, byte_len * 8))
+
+
+        mappings, slot_counter, bit_counter = get_primitive_storage_mapping(slot_counter, bit_counter, byte_len * 8)
+        m_info.extend(mappings)
     elif True in [m_type.startswith(btype) for btype in ["fixed", "ufixed"]]:
         type_part = m_type[m_type.index("fixed") + 5:]
         type_part = type_part[:type_part.index("x")]
-        slot_counter, bit_counter = add_counters(slot_counter, bit_counter, int(type_part))
-        m_info.extend(get_primitive_storage_mapping(slot_counter, bit_counter, int(type_part)))
+
+
+        mappings, slot_counter, bit_counter = get_primitive_storage_mapping(slot_counter, bit_counter, int(type_part))
+        m_info.extend(mappings)
     elif m_type.startswith('enum '):
-        slot_counter, bit_counter = add_counters(slot_counter, bit_counter, 8) # Should be always 8 unless there is some weird enum
-        m_info.extend(get_primitive_storage_mapping(slot_counter, bit_counter, 8))
+        mappings, slot_counter, bit_counter = get_primitive_storage_mapping(slot_counter, bit_counter, 8)
+        m_info.extend(mappings)
     elif m_type.startswith("function "):
         bytes_size = 8 # for default case visibility=internal
         if " external " in m_type:
             bytes_size = 24
-        slot_counter, bit_counter = add_counters(slot_counter, bit_counter, bytes_size * 8)
-        m_info.extend(get_primitive_storage_mapping(slot_counter, bit_counter, bytes_size * 8))
+        mappings, slot_counter, bit_counter = get_primitive_storage_mapping(slot_counter, bit_counter, bytes_size * 8)
+        m_info.extend(mappings)
 
     return m_info, slot_counter, bit_counter
 

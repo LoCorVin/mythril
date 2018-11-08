@@ -10,6 +10,8 @@ from .sn_utils import get_si_from_state
 from copy import deepcopy
 from .debugc import printd
 
+from mythril.laser.ethereum.instructions import keccac_map
+
 
 
 ANNOTATION_START = "@"
@@ -153,9 +155,9 @@ def get_status_string(status):
 
 
 class Status(Enum):
-    HOLDS = 1 # SAT solver did not find any possible violation
-    UNCHECKED = 2 # Execution still has to run
-    HSINGLE = 3 # There is a violation but it contains references to storage (maybe a false positive to be ruled out)
+    UNCHECKED = 1 # Execution still has to run
+    HSINGLE = 2 # There is a violation but it contains references to storage (maybe a false positive to be ruled out)
+    HOLDS = 3 # SAT solver did not find any possible violation
     VDEPTH = 4 # Transaction chaining according to some strategy did not find a chain with constructor in the beginning
     VCHAIN = 5 # Chain with violation in the end and construction trace in the beginning found
     VSINGLE = 6 # violation with no references to storage found.
@@ -189,19 +191,21 @@ class Violation:
         self.contract = contract
         self.additional = additional
 
-    def get_dictionary(self, annotation_contract):
+    def get_dictionary(self, annotation_contract, filename_map):
         origin_file_code = annotation_contract.origin_file_code
         length_prefix_rew = 0
         for rewriting in annotation_contract.rewritings:
             if rewriting.pos <= self.offset:
                 length_prefix_rew += len(rewriting.text)
         loc = get_origin_pos_line_col(origin_file_code[:self.offset-length_prefix_rew + (len(self.code) if self.rew_based else 0)])
+        if not self.rew_based:
+            self.code = origin_file_code.replace("/*", "").replace("*/", "")[loc[0]:loc[0] + self.length]
 
         return {"level": get_status_string(self.status), "lvl_description": self.get_lvl_description(),
-                "filename": self.filename, "row": loc[1], "col": loc[2], "code": self.code,
-                "length": 1 if self.rew_based else self.length, "pos": loc[0],
-                "vio_description": self.vio_description, "transaction_depth": self.trace.lvl,
-                "chained_functions": [{"name": func.name, "signature": func.signature} for func in self.trace.functions]}
+                "filename": filename_map[self.filename] if self.filename in filename_map else self.filename,
+                "row": loc[1], "col": loc[2], "code": self.code, "length": 1 if self.rew_based else self.length,
+                "pos": loc[0], "vio_description": self.vio_description, "transaction_depth": self.trace.lvl,
+                "chained_functions": [{"name": func.name, "signature": func.signature, "isConstructor": func.isConstructor, "visibility": func.visibility} for func in self.trace.functions]}
 
     def get_lvl_description(self):
         lvl = self.status
@@ -310,11 +314,11 @@ class Annotation:
             self.viol_rts.append(rewriting_rt)
 
 
-    def get_dictionary(self):
+    def get_dictionary(self, filename_map):
         adict = {"title": self.title, "level": get_status_string(self.status), "lvl_description": self.get_lvl_description(),
                  "ano_description": self.get_annotation_description(), "pos": self.origin[0], "line": self.origin[1], "col": self.origin[2],
                  "ano_string": self.annotation_str, "length": len(self.annotation_str),
-                 "violations": [violation.get_dictionary(self.annotation_contract) for violation in self.violations]}
+                 "violations": [violation.get_dictionary(self.annotation_contract, filename_map) for violation in self.violations]}
         return adict
 
     def add_violations(self, violations, src_mapping, contract, additional=None, length=None, vio_description="", rew_based=True): # Ads new violations to this annotation and sets the status, can be called multiple times
@@ -506,6 +510,8 @@ class SetRestrictionAnnotation(Annotation):
         for m_var in member_variables:
             self.storage_slot_map[m_var.name] = contract.storage_map[m_var.name]
 
+        self.member_variables = member_variables
+
         # Todo get all storage slots from storage map
         Annotation.__init__(self, annotation_str)
 
@@ -533,7 +539,7 @@ class SetRestrictionAnnotation(Annotation):
                     # Skipp if function is somehow mentioned in the restricted list
                     if function and (function.name in self.restricted_f or function.signature in self.restricted_f) or in_constructor and ("constructor" in self.restricted_f
                         or self.contract.name in self.restricted_f or any([restriction.startswith(self.contract.name + "(") for restriction in self.restricted_f])):
-                        break
+                        continue
                     for member_name, storage_slots in self.storage_slot_map.items():
                         for storage_slot in storage_slots:
                             may_write_to, constraints = storage_slot.may_write_to(state.mstate.stack[-1], state.mstate.stack[-2], state.environment.active_account.storage._storage, state.mstate.constraints)
@@ -561,8 +567,8 @@ class SetRestrictionAnnotation(Annotation):
         return "This annotation binds a restriction to one or more member variables in the contract and uses symbolic " \
                "execution to find executions were this restriction is violated. If the annotation is inside of a single" \
                " member variable declaration statement, the restriction is bound only to that variable. If not it applies" \
-               "to all variables declared in the same line. \n This annotation restricts setting values or content of certain " \
-               "variables to the specified function names or signatures: \n" + self.content
+               "to all variables declared in the same line. \n This annotation restricts setting values or content of the " \
+               "variables: " + ", ".join([mv.type + " " + mv.name for mv in self.member_variables]) + " to the specified function names or signatures: \n" + self.content
 
 
 
