@@ -18,10 +18,17 @@ def safe_decode(hex_encoded_string):
 
 def get_solc_json(file, solc_binary="solc", solc_args=None):
 
-    cmd = [solc_binary, "--combined-json", "bin,bin-runtime,srcmap-runtime,srcmap,abi,ast", '--allow-paths', "."]
+    cmd = [solc_binary, "--combined-json", "bin,bin-runtime,srcmap-runtime,srcmap,abi,ast"]
 
     if solc_args:
-        cmd.extend(solc_args.split(" "))
+        cmd.extend(solc_args.split())
+
+    if not "--allow-paths" in cmd:
+        cmd.extend(["--allow-paths", "."])
+    else:
+        for i, arg in enumerate(cmd):
+            if arg == "--allow-paths":
+                cmd[i + 1] += ",."
 
     cmd.append(file)
 
@@ -32,9 +39,14 @@ def get_solc_json(file, solc_binary="solc", solc_args=None):
         ret = p.returncode
 
         if ret != 0:
-            raise CompilerError("Solc experienced a fatal error (code %d).\n\n%s" % (ret, stderr.decode('UTF-8')))
+            raise CompilerError(
+                "Solc experienced a fatal error (code %d).\n\n%s"
+                % (ret, stderr.decode("UTF-8"))
+            )
     except FileNotFoundError:
-        raise CompilerError("Compiler not found. Make sure that solc is installed and in PATH, or set the SOLC environment variable.")
+        raise CompilerError(
+            "Compiler not found. Make sure that solc is installed and in PATH, or set the SOLC environment variable."
+        )
 
     out = stdout.decode("UTF-8")
 

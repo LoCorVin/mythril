@@ -1,4 +1,6 @@
 from re import findall
+from json import loads
+from ethereum import utils
 
 opening_brackets = ["(", "{", "[", "<"]
 closing_brackets = [")", "}", "]", ">"]
@@ -13,6 +15,38 @@ def count_lines(text):
 
 def get_pos_line_col(text):
     return len(text), len(findall(newlines_reg, text)), min(map(lambda nwl: text[::-1].index(nwl) if nwl in text else len(text), newlines))
+
+def get_hashes_from_abi(abi):
+    hashes = []
+    for f_interface in abi:
+        if "name" in f_interface:
+            signature = f_interface['name']
+            signature += "(" + ",".join([param['type'] for param in f_interface['inputs']]) + ")"
+            hashes.append(utils.sha3(signature)[:4].hex())
+    return hashes
+
+
+def get_transaction_functions(contract):
+    functions = contract.functions
+    abi_hashes = get_hashes_from_abi(loads(contract.abi))
+    constructor_function = False
+    default_function = False
+    f_hashes = []
+    t_functions = []
+    for func in functions:
+        if func.isConstructor:
+            if not constructor_function:
+                constructor_function = True
+                t_functions.append(func)
+        elif len(func.hash) <= 0:
+            if not default_function:
+                default_function = True
+                t_functions.append(func)
+        elif func.hash not in f_hashes:
+            f_hashes.append(func.hash)
+            if not func.constant and func.hash in abi_hashes:
+                t_functions.append(func)
+    return t_functions
 
 def find_matching_closed_bracket(filedata, bracket_idx):
     nwl = get_newlinetype(filedata)

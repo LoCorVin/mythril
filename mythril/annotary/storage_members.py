@@ -81,7 +81,8 @@ class ConcretSlot(StorageSlot):
         index_str = str(z3_index)
         # Rule out keccak symbolic variable as the function prevents someone from arbitrarily controlling the index
 
-        if len(z3_index.children()) < 2 and index_str.startswith("keccac"):
+        if len(z3_index.children()) < 2 and index_str.startswith("keccac") \
+                or "+" in index_str and index_str[:index_str.index("+")].strip() in keccac_map :
             return False, None # Todo Here I might do something more elaborate if I see that it does actually not solve critical writings
 
         # Problem because writing to an array has a keccak offset, but if the index can be arbitrarely choosen z3 finds
@@ -154,9 +155,13 @@ class ArraySlot(StorageSlot):
     def __init__(self, slot_counter):
         # Could make a difference between slot and keccak-slot access (length vs. content)
         self.slot_counter = slot_counter
+        self.bitlength = 256
 
     def may_write_to(self, z3_index, z3_value, storage, constraint_list):
-        # write keccak(...) + index consider constraint
+
+        may_write_to, added_constraints = ConcretSlot.may_write_to(self, z3_index, z3_value, storage, constraint_list)
+        if may_write_to:
+            return may_write_to, added_constraints
 
         slot_hash = utils.sha3(utils.bytearray_to_bytestr(util.concrete_int_to_bytes(self.slot_counter)))
         slot_hash = str(BitVecVal(util.concrete_int_from_bytes(slot_hash, 0), 256))
@@ -182,9 +187,12 @@ class BytesSlot(StorageSlot):
     def __init__(self, slot_counter):
         # Even more different than the ArraySlots as the non-keccak slot can contain content and length if the content is short enough.
         self.slot_counter = slot_counter
+        self.bitlength = 256
 
     def may_write_to(self, z3_index, z3_value, storage, constraint_list):
-        pass
+
+        may_write_to, added_constraints = ArraySlot.may_write_to(self, z3_index, z3_value, storage, constraint_list)
+        return may_write_to, added_constraints
 
     def may_read_from(self, z3_index, z3_value, storage, constraint_list):
         pass

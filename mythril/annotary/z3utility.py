@@ -65,6 +65,9 @@ def simplify_constraints_individually(constraints):
         simp_const.append(simplify(const))
     return simp_const
 
+def simplify_storage(storage):
+    return {k:(simplify(v) if not isinstance(v, int) else v) for k, v in storage.items()}
+
 
 def simplify_z3_constraints(constraints): # Todo simplification of the sum of constraints
     simp_const = constraints

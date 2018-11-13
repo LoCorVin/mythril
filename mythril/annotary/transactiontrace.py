@@ -38,8 +38,6 @@ class TransactionTrace:
         self.constraints = simplify_constraints_individually(constraints)
         if contract:
             self.functions = [get_function_from_constraints(contract, state.mstate.constraints, isinstance(state.current_transaction, ContractCreationTransaction))]
-            if None in self.functions:
-                print()
 
         # eliminate all constraints that only contain names not in the set of names from storage
         self.constraints = simplify_z3_constraints(self.constraints) # Todo simplification of the sum of constraints

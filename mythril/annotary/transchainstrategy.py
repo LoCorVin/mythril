@@ -114,7 +114,7 @@ class BackwardChainStrategy(ChainStrategy):
                     violation = violations.popleft()
                     vts = deque([violation.trace])
                     try:
-                        for i in range(self.config.depth):
+                        for i in range(self.config.max_transaction_depth):
                             new_vs = []
                             while vts:
                                 v = vts.popleft()
@@ -122,6 +122,7 @@ class BackwardChainStrategy(ChainStrategy):
                                     is_const = False
                                     vt_new = t.apply_trace(v)
                                     if t in self.const_traces:
+
                                         is_const = True
                                         zeroize_storage_vars(t)
                                     if not contains_storage_reference(vt_new):
@@ -139,7 +140,8 @@ class BackwardChainStrategy(ChainStrategy):
                                             printd("Constraints not Satisfiable")
 
                                     else:
-                                        new_vs.append(vt_new)
+                                        if not is_const:
+                                            new_vs.append(vt_new)
                             if not new_vs:
                                 # annotation.violations = []
                                 violation.trace = None

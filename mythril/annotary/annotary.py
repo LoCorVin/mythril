@@ -17,12 +17,21 @@ from mythril.annotary.stateprocessing import AnnotationProcessor
 from mythril.annotary.annotation import annotation_kw, init_annotation, increase_rewritten_pos, comment_out_annotations, expand_rew
 from mythril.annotary.ast_parser import get_contract_ast, get_function_asts, get_function_param_tuples, get_function_term_positions, get_struct_map
 from mythril.annotary.storage_members import extract_storage_map
+from mythril.annotary.ast_parser import get_all_nested_dicts_with_kv_pairs, get_all_functions_for_contract
+import sys
+import faulthandler
+import signal
+from threading import Thread
+from multiprocessing.dummy import Pool as ThreadPool
+from concurrent.futures import ThreadPoolExecutor
+import platform
+import time
 
 from mythril.annotary.config import Config
 
 from mythril.annotary.transchainstrategy import BackwardChainStrategy
 
-from z3 import BitVec,eq
+from z3 import BitVec,eq, simplify
 from os.path import exists, isdir, dirname, isfile, join
 from os import makedirs, chdir, listdir
 from re import finditer, escape
@@ -58,6 +67,11 @@ class SolidityFunction:
         self.name = attributes['name']
         self.isConstructor = attributes['isConstructor']
         self.params = []
+        self.src = f_ast['src']
+
+        self.start = int(self.src[:self.src.index(":")])
+        self.length = int(self.src[self.src.index(":") + 1:self.src.rfind(":")])
+        self.end = int(self.start + self.length)
 
         self.params = get_function_param_tuples(f_ast)
         params = ""
@@ -114,6 +128,8 @@ def replace_index(text, toReplace, replacement, index):
     return text[:index] + replacement + text[(index + len(toReplace)):]
 
 
+
+
 def get_containing_file(contract):
     contract_name = contract.name
     containing_file = None
@@ -133,8 +149,15 @@ def augment_with_ast_info(contract):
     contract_file = get_containing_file(contract)
     ast = contract_file.ast
 
+
+
     contract.ast = get_contract_ast(ast, contract.name) # Attention, here we write over a already filled variable
-    f_asts = get_function_asts(contract.ast)
+
+
+    f_asts = get_all_functions_for_contract(contract)
+
+
+    # f_asts = get_function_asts(contract.ast)
     contract.calldata_name_map = get_calldata_name_map(abi_json_to_abi(contract.abi))
     for f_ast in f_asts:
         contract.functions.append(SolidityFunction(f_ast, contract.calldata_name_map))
@@ -228,7 +251,7 @@ class Annotary:
                 copy(full_file_name, self.tmp_dir)
                 # Todo consider subdirectories and symbolic links
 
-    def provide_resources(self, contracts, address, eth, dynld, sigs, max_depth=50):
+    def provide_resources(self, contracts, address, eth, dynld, sigs, max_depth=None):
         self.contracts = contracts
         self.address = address
         self.eth = eth
@@ -324,6 +347,8 @@ class Annotary:
             #printd("----")
             #printd(rew_file_code)
             #printd("----")
+            printd("Rewritten code")
+            printd(rew_file_code)
             write_code(sol_file.filename, rew_file_code)
 
             annotation_contract = SolidityContract(sol_file.filename, contract.name, solc_args=self.solc_args)
@@ -356,7 +381,9 @@ class Annotary:
         counter = 0
 
         # Used to run annotations violation build in traces construction in parallel
-        annotationsProcessor = AnnotationProcessor(contract.creation_disassembly.instruction_list,
+        annotationsProcessor = None
+        if any([len( annotation.viol_rew_instrs) > 0 for annotation in self.annotation_map[contract.name]]):
+            annotationsProcessor = AnnotationProcessor(contract.creation_disassembly.instruction_list,
                                                    contract.disassembly.instruction_list, create_ignore_list, trans_ignore_list, contract)
 
         # Symbolic execution of construction and transactions
@@ -367,10 +394,14 @@ class Annotary:
 
         global keccac_map
         keccac_map = {}
-        sym_transactions = SymExecWrapper(contract, self.address, laser_strategy, dynloader, max_depth=self.max_depth,
+        if self.max_depth:
+            self.config.mythril_depth = self.max_depth
+        printd("Sym Exe: " + str(contract.name))
+        sym_transactions = SymExecWrapper(contract, self.address, laser_strategy, dynloader, max_depth=self.config.mythril_depth,
                                           prepostprocessor=annotationsProcessor, code_extension=sym_code_extension) # Todo Mix the annotation Processors or mix ignore listst
-        printd("Construction Violations: " + str(len(reduce(lambda x, y: x + y, annotationsProcessor.create_violations, []))))
-        printd("Transaction Violations: " + str(len(reduce(lambda x, y: x + y, annotationsProcessor.trans_violations, []))))
+        if annotationsProcessor:
+            printd("Construction Violations: " + str(len(reduce(lambda x, y: x + y, annotationsProcessor.create_violations, []))))
+            printd("Transaction Violations: " + str(len(reduce(lambda x, y: x + y, annotationsProcessor.trans_violations, []))))
 
         # Add found violations to the annotations they violated
         # Todo Extract violations from only one symbolic execution
@@ -393,7 +424,9 @@ class Annotary:
         # Build traces from the regular annotation ignoring global states
         # create_traces = get_construction_traces(sym_creation)
         # Todo change traces extraction in a way to use mappings to differentiate between construction and transaction
+        start_time = time.time()
         create_traces, trans_traces = get_traces(sym_transactions, contract)
+        printd("--- %s seconds ---" % (time.time() - start_time))
 
         return create_traces, trans_traces
 
@@ -423,7 +456,7 @@ class Annotary:
             chain_strat = BackwardChainStrategy(contract.const_traces, contract.trans_traces, annotations, self.config)
             printd("Start")
 
-            if self.config.depth > 0 and self.config.chain_verification:
+            if self.config.mythril_depth > 0 and self.config.chain_verification:
                 chain_strat.check_violations()
 
             for annotation in annotations:
@@ -462,61 +495,101 @@ class Annotary:
         # Todo Find how they are storing results
         pass
 
-def is_storage_primitive(storage): # Todo If concrete storage gives the value 0 to all unknown lookup values, trace combination has to consider that for the constructor
+def is_storage_primitive(storage):
     if storage:
         for index, content in storage._storage.items():
-            if isinstance(content, int) or not eq(content, BitVec("storage[" + str(index) + "]", 256)): # Todo See and adapt storage indexing
+            if isinstance(content, int) or not eq(content, BitVec("storage[" + str(index) + "]", 256)):
                 return False
     return True
 
 def get_traces(statespace, contract):
-    printd("get_traces")
-    elim_t_t = 0
-    elim_c_t = 0
-    trans_traces = []
-    constr_traces = []
-    state_count = 0
-    node_count = 0
+    states = []
 
     for k in statespace.nodes:
-        node_count += 1
         node = statespace.nodes[k]
         for state in node.states:
-            state_count += 1
-            instruction = state.get_current_instruction()
-            # Todo should I ignore certain functions: non public or external functions ???
-            if instruction['opcode'] in ["STOP", "RETURN"]:
-                storage = state.environment.active_account.storage
-                if storage and not is_storage_primitive(storage) and are_z3_satisfiable(state.mstate.constraints):
+            state.contract = contract
+            states.append(state)
 
-                    if isinstance(state.current_transaction, ContractCreationTransaction ):
-                        istr_list = contract.creation_disassembly.instruction_list
-                        mappings = contract.creation_mappings
-                    else:
-                        istr_list = contract.disassembly.instruction_list
-                        mappings = contract.mappings
+    printd("Sequential Tracebuilding")
+    results = [get_trace_for_state(state) for state in states]
+    printd("Finished")
 
-                    mapping = get_sourcecode_and_mapping(instruction['address'], istr_list, mappings)
+    return [trace for trace_type, trace in results if trace is not None and trace_type == "c"], \
+            [trace for trace_type, trace in results if trace is not None and trace_type == "t"]
 
-                    if mapping:
 
-                        trace = TransactionTrace(state, contract)
-                        if isinstance(state.current_transaction, ContractCreationTransaction):
-                            constr_traces.append(trace)
-                        else:
-                            trans_traces.append(trace)
-                    else:
-                        printd("Skipped mapping")
+def get_trace_for_state(state):
+    ''' Returns a representation of a transaction trace if this state marks a transaction en, if not None is returned'''
+    instruction = state.get_current_instruction()
+    # Todo should I ignore certain functions: non public or external functions ???
+    if instruction['opcode'] in ["STOP", "RETURN"]:
+        storage = state.environment.active_account.storage
+        if storage and not is_storage_primitive(storage) and are_z3_satisfiable(state.mstate.constraints):
+            if isinstance(state.current_transaction, ContractCreationTransaction):
+                istr_list = state.contract.creation_disassembly.instruction_list
+                mappings = state.contract.creation_mappings
+            else:
+                istr_list = state.contract.disassembly.instruction_list
+                mappings = state.contract.mappings
+
+            mapping = get_sourcecode_and_mapping(instruction['address'], istr_list, mappings)
+
+            if mapping:
+
+                trace = TransactionTrace(state, state.contract)
+                if isinstance(state.current_transaction, ContractCreationTransaction):
+                    return "c", trace
                 else:
-                    if isinstance(state, ContractCreationTransaction):
-                        elim_c_t += 1
-                    else:
-                        elim_t_t += 1
-    printd("Construction traces: " + str(len(constr_traces)) + " eliminated: " + str(elim_c_t))
-    printd("Transaction traces: " + str(len(trans_traces)) + " eliminated: " + str(elim_t_t))
-    printd("states: " + str(state_count))
-    printd("nodes: " + str(node_count))
-    return constr_traces, trans_traces
+                    return "t", trace
+    return None, None
+
+
+def get_traces_parallel(statespace, contract):
+    faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
+    states = []
+
+    for k in statespace.nodes:
+        node = statespace.nodes[k]
+        for state in node.states:
+            if state.get_current_instruction()['opcode'] in ["STOP", "RETURN"]:
+                state.contract = contract
+                states.append(state)
+
+    #print("Parallel Trace building")
+    #signal.signal(signal.SIGSEGV, sig_handler)
+    #max_threads = 2
+    #results = [None]*len(states)
+    #threads = [Thread(target=get_traces_mod, args=(states, results, i, max_threads)) for i in range(max_threads)]
+    #for thread in threads:
+    #    thread.start()
+    #for thread in threads:
+    #    thread.join()
+    pool = ThreadPool(4)
+    results = pool.map(get_trace_for_state, states)
+    pool.close()
+    pool.join()
+    #results = []
+    #with ThreadPoolExecutor(max_workers=4) as e:
+        #for state in states:
+        #    results.append(e.submit(get_trace_for_state, state))
+        #results = [result.result() for result in results]
+        ##results = e.map(get_trace_for_state, states)
+
+    print("Finished")
+    print(results)
+
+    return [trace for trace_type, trace in results if trace is not None and trace_type == "c"], \
+           [trace for trace_type, trace in results if trace is not None and trace_type == "t"]
+
+def get_traces_mod(states,results, nr, mod):
+    i = nr
+    print(len(states))
+    while i < len(states):
+        results[i] = get_trace_for_state(states[i])
+        print(i)
+        i += mod
+
 
 def get_construction_traces(statespace):
     printd("get_constructor_traces")

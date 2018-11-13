@@ -5,7 +5,8 @@ class Config:
     def __init__(self, filepath=None):
 
         self.chain_verification = True
-        self.depth = 3
+        self.max_transaction_depth = 3
+        self.mythril_depth = 25
 
         if filepath:
             with open(filepath) as config_file:

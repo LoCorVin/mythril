@@ -2,7 +2,7 @@ from enum import Enum
 from re import match, finditer, escape, sub
 from functools import reduce
 from .transactiontrace import TransactionTrace
-from .codeparser import find_matching_closed_bracket, get_pos_line_col
+from .codeparser import find_matching_closed_bracket, get_pos_line_col, get_transaction_functions
 from .coderewriter import expand_rew, after_implicit_block, get_exp_block_brack_pos, get_editor_indexed_rewriting
 from mythril.laser.ethereum.transaction.transaction_models import ContractCreationTransaction
 from .z3utility import get_function_from_constraints
@@ -180,8 +180,11 @@ class Violation:
         self.lineno = src_mapping.lineno
         self.offset = src_mapping.offset
         self.length = src_mapping.length
-        self.code = self.src_info.code
-        self.filename = self.src_info.filename
+        self.code = None
+        self.filename = None
+        if self.src_info:
+            self.code = self.src_info.code
+            self.filename = self.src_info.filename
 
         if length:
             self.length = length
@@ -200,12 +203,28 @@ class Violation:
         loc = get_origin_pos_line_col(origin_file_code[:self.offset-length_prefix_rew + (len(self.code) if self.rew_based else 0)])
         if not self.rew_based:
             self.code = origin_file_code.replace("/*", "").replace("*/", "")[loc[0]:loc[0] + self.length]
+        self.note = None
+        if not self.src_info:
+            appearing_function = self.trace.functions[-1]
+            function_start = origin_file_code[appearing_function.start:]
+            loc = get_origin_pos_line_col(origin_file_code[:appearing_function.start])
+            if function_start.startswith("function"):
+                self.code = "function"
+            elif function_start.startswith("constructor"):
+                self.code = "constructor"
+            self.length = len(self.code)
+            self.code = ""
+            self.note = "The violations cannot be mapped to a specific code location, this can happen when the violation" \
+                        " happens in some compiler generated assembly that is used to support multiple statements. The constraints restrict" \
+                        " the violation to the marked function."
+
 
         return {"level": get_status_string(self.status), "lvl_description": self.get_lvl_description(),
                 "filename": filename_map[self.filename] if self.filename in filename_map else self.filename,
-                "row": loc[1], "col": loc[2], "code": self.code, "length": 1 if self.rew_based else self.length,
-                "pos": loc[0], "vio_description": self.vio_description, "transaction_depth": self.trace.lvl,
-                "chained_functions": [{"name": func.name, "signature": func.signature, "isConstructor": func.isConstructor, "visibility": func.visibility} for func in self.trace.functions]}
+                "row": loc[1], "note": self.note, "col": loc[2], "code": self.code, "length": 1 if self.rew_based else self.length,
+                "pos": loc[0], "vio_description": self.vio_description, "transaction_depth": self.trace.lvl if self.trace else None,
+                "chained_functions": [{"name": func.name, "signature": func.signature, "isConstructor": func.isConstructor, "visibility": func.visibility}
+                                      for func in self.trace.functions] if self.trace else None}
 
     def get_lvl_description(self):
         lvl = self.status
@@ -419,12 +438,15 @@ class InvariantAnnotation(Annotation):
         if not hasattr(contract, 'functions'):
             raise RuntimeError("Contract not augmented with functions parsed from ast")
         self.functions = contract.functions
+        self.original_contract = contract
 
         Annotation.__init__(self, annotation_str)
 
     def rewrite_code(self, code, contract_range): # In the default case it returns '' empty string, to delete it before handing it over to the compiler
         assertion_text = "assert(" + self.content + ");"
-        for function in self.functions:
+
+
+        for function in get_transaction_functions(self.original_contract):
             if function.constant == True: # Dont' build invariant assertions for functions that do not change storage and thus do not change invariants
                 continue
             for term_pos in function.terminating_pos:

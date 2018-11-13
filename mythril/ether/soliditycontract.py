@@ -153,6 +153,8 @@ class SolidityContract(ETHContract):
 
 
         solidity_file = self.solidity_files[mapping.solidity_file_idx]
+        if mapping.solidity_file_idx == -1:
+            return None # -1 in python leads to the last list element, but -1 in sourcemapping means no file associated
 
         filename = solidity_file.filename
 

@@ -46,6 +46,34 @@ def get_all_nested_dicts_with_kv_pairs(obj, key, value):
             dicts.extend(get_all_nested_dicts_with_kv_pairs(elem, key, value))
     return dicts
 
+def get_all_functions_for_contract(contract):
+    contract_asts = []
+    for file in contract.solidity_files:
+        contract_asts.extend(get_all_nested_dicts_with_kv_pairs(file.ast, "name", "ContractDefinition"))
+    main_contract_ast = contract.ast if hasattr(contract, "ast") else None
+    if not main_contract_ast:
+        for contract_ast in contract_asts:
+            if contract_ast['attributes']['name'] == contract.name:
+                main_contract_ast = contract_ast
+    functions = get_function_asts(main_contract_ast)
+    if not hasattr(main_contract_ast['attributes'], 'linearizedBaseContracts') \
+        and len(main_contract_ast['attributes']['linearizedBaseContracts']) <= 1:
+        return functions
+    linearizedBaseContracts = main_contract_ast['attributes']['linearizedBaseContracts'][1:]
+    for contract_id in linearizedBaseContracts:
+        for contract_ast in contract_asts:
+            if contract_ast['id'] == contract_id:
+                next_base_contract = contract_ast
+                break
+        base_functions = get_function_asts(next_base_contract)
+        functions.extend(base_functions)
+    return functions
+
+def function_override(f1_ast, f2_ast):
+    pass
+
+
+
 def get_contract_ast(ast, contract_name):
     contract_asts = get_all_nested_dicts_with_kv_pairs(ast, "name", "ContractDefinition")
     try:
