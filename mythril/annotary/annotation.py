@@ -635,7 +635,6 @@ class SetRestrictionAnnotation(Annotation):
         for restriction in self.content.split(","):
             restriction = sub('\s','',restriction)
             self.restricted_f.append(restriction)
-
         for m_var in member_variables:
             self.storage_slot_map[m_var.declaring_contract + "." + m_var.name] = contract.storage_map[m_var.declaring_contract + "."+ m_var.name]
 
