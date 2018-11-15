@@ -6,15 +6,16 @@ from mythril.annotary.codeparser import find_matching_closed_bracket, get_newlin
 
 class Rewriting:
 
-    def __init__(self, text, pos, line, col):
+    def __init__(self, gname, text, pos, line, col):
         self.text = text
         self.pos = pos
         self.line = line
         self.col = col
+        self.gname = gname # To group rewritings to the same position further
 
     def __eq__(self, other):
         if isinstance(other, Rewriting):
-            return self.text == other.text and self.pos == other.pos and self.line == other.line and self.col == other.col
+            return self.text == other.text and self.gname == other.gname and self.pos == other.pos and self.line == other.line and self.col == other.col
         return NotImplemented
 
 
@@ -26,17 +27,17 @@ def apply_rewriting(code, rewriting):
 def get_line_count(text):
     return text.count(get_newlinetype(text))
 
-def expand_rew(code, rew_tuple):
+def expand_rew(function_name, code, rew_tuple):
     pos = rew_tuple[1]
     nr_nwls = code[:pos].count(get_newlinetype(code))
     if get_newlinetype(code) in code[:pos]:
         col = code[:pos][::-1].index(get_newlinetype(code)[::1])
     else:
         col = pos
-    return Rewriting(rew_tuple[0], pos, nr_nwls, col)
+    return Rewriting(function_name, rew_tuple[0], pos, nr_nwls, col)
 
 def get_editor_indexed_rewriting(rewriting):
-    return Rewriting(rewriting.text, rewriting.pos, rewriting.line + 1, rewriting.col)
+    return Rewriting(rewriting.gname, rewriting.text, rewriting.pos, rewriting.line + 1, rewriting.col)
 
 def get_code(filename):
     with open(filename, 'r', encoding="utf-8") as file:

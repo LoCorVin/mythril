@@ -2,13 +2,14 @@ from enum import Enum
 from re import match, finditer, escape, sub
 from functools import reduce
 from .transactiontrace import TransactionTrace
-from .codeparser import find_matching_closed_bracket, get_pos_line_col, get_transaction_functions
+from .codeparser import find_matching_closed_bracket, get_pos_line_col, get_transaction_functions, find_first_uncommented_str
 from .coderewriter import expand_rew, after_implicit_block, get_exp_block_brack_pos, get_editor_indexed_rewriting
 from mythril.laser.ethereum.transaction.transaction_models import ContractCreationTransaction
 from .z3utility import get_function_from_constraints
-from .sn_utils import get_si_from_state
+from .sn_utils import get_si_from_state, get_containing_file, find_contract_idx_range
 from copy import deepcopy
 from .debugc import printd
+
 
 from mythril.laser.ethereum.instructions import keccac_map
 
@@ -97,13 +98,14 @@ def get_annotated_members(contract, code, start, annotation_length):
 
 
 
-def init_annotation(contract, code, head, kw, start, end, origin):
+def init_annotation(contract, code, head, kw, start, end, origin, config):
     if kw == "check":
         content, content_prefix = get_annotation_content(code, start + len(head))
         return CheckAnnotation(code[start:(end + content_prefix)] + content + ")", get_pos_line_col(code[:start]), origin)
     elif kw == "invariant":
         content, content_prefix = get_annotation_content(code, start + len(head))
-        return InvariantAnnotation(contract, code[start:(end + content_prefix)] + content + ")", get_pos_line_col(code[:start]), origin)
+        return InvariantAnnotation(contract, code[start:(end + content_prefix)] + content + ")",
+                                   get_pos_line_col(code[:start]), origin, config.assign_state_references)
     elif kw == "set_restricted":
         content, content_prefix = get_annotation_content(code, start + len(head))
         member_vars = get_annotated_members(contract, code, start, len(head + content) + 2)
@@ -133,6 +135,22 @@ def increase_rewritten_pos(ano_rewritings, rewriting, nwl_type="\n"):
 def is_mapping_inside_rew(mapping, rewriting):
     return is_mapping_inside_range(mapping, rewriting.pos, rewriting.pos + len(rewriting.text))
 
+def is_return_in_previous_function(params, state):
+    instruction = state.get_current_instruction()
+    print(state.id)
+    print(instruction)
+    if instruction['opcode'] == 'RETURN':
+        return True
+    return False
+
+def is_outside_contract(params, state):
+    contract,a_contract_range = params
+    instruction = state.get_current_instruction()
+    si, mapping = get_si_from_state(contract, instruction['address'], state)
+    if (si.filename != get_containing_file(contract).filename or mapping.offset < a_contract_range[0] \
+        or mapping.offset > a_contract_range[2]) and not si.code.startswith("function"):
+        return True
+    return False
 
 def is_mapping_inside_range(mapping, start_pos, end_pos):
     # mapping.lineno == rewriting.line and
@@ -194,13 +212,46 @@ class Violation:
         self.contract = contract
         self.additional = additional
 
+    def get_matching_state(self, f, param, init_state):
+        states = self.contract.states
+        while True:
+            if f(param, init_state):
+                return init_state
+            if hasattr(init_state, "previous"):
+                init_state = states[init_state.previous]
+            else:
+                return None
+
     def get_dictionary(self, annotation_contract, filename_map):
         origin_file_code = annotation_contract.origin_file_code
+
+        trace_f = self.trace.functions[-1] # Get the function where the violation started
+        # Search for the function where the tranasaction ends, skipping delegation dummies
+        if self.rew_based and trace_f.hash not in [imp_func.hash for imp_func in annotation_contract.original_contract.implemented_functions]:
+            matching_state = self.get_matching_state(is_outside_contract, (self.contract, find_contract_idx_range(annotation_contract)), self.trace.state)
+            instruction = matching_state.get_current_instruction()
+            self.src_info, self.src_mapping = get_si_from_state(self.contract, matching_state.get_current_instruction()['address'], matching_state)
+
+            self.lineno = self.src_mapping.lineno
+            self.offset = self.src_mapping.offset
+            self.length = self.src_mapping.length
+            self.code = None
+            self.filename = None
+            if self.src_info:
+                self.code = self.src_info.code
+                self.filename = self.src_info.filename
+
+            self.length = 1
+
         length_prefix_rew = 0
         for rewriting in annotation_contract.rewritings:
             if rewriting.pos <= self.offset:
                 length_prefix_rew += len(rewriting.text)
         loc = get_origin_pos_line_col(origin_file_code[:self.offset-length_prefix_rew + (len(self.code) if self.rew_based else 0)])
+
+
+
+
         if not self.rew_based:
             self.code = origin_file_code.replace("/*", "").replace("*/", "")[loc[0]:loc[0] + self.length]
         self.note = None
@@ -262,7 +313,7 @@ class Annotation:
 
         self.anotation_contract = None
 
-    def rewrite_code(self, code):
+    def rewrite_code(self, file_code, contract_code, contract_range):
         # In the default case it returns '' empty string, to delete it before handing it over to the compiler
         raise NotImplementedError("Abstract function of Annotation abstraction")
 
@@ -401,13 +452,13 @@ class CheckAnnotation(Annotation):
             + "this point in the program. An assert is inserted and symbolic execution tries to find falsifying " \
             + "assigments. The presence of the assert statement does not influence the later execution."
 
-    def rewrite_code(self, code, contract_range): # In the default case it returns '' empty string, to delete it before handing it over to the compiler
-        assert_rew = expand_rew(code, ("assert(" + self.content + ");", self.loc[0]))
-        if after_implicit_block(code, self.loc[0]):
-            start, end = get_exp_block_brack_pos(code, self.loc[0])
-            self.rewritings.append(expand_rew(code, ("{", start)))
+    def rewrite_code(self, file_code, contract_code, contract_range): # In the default case it returns '' empty string, to delete it before handing it over to the compiler
+        assert_rew = expand_rew("", contract_code, ("assert(" + self.content + ");", self.loc[0]))
+        if after_implicit_block(contract_code, self.loc[0]):
+            start, end = get_exp_block_brack_pos(contract_code, self.loc[0])
+            self.rewritings.append(expand_rew("", contract_code, ("{", start)))
             self.rewritings.append(assert_rew)
-            self.rewritings.append(expand_rew(code, ("}", end)))
+            self.rewritings.append(expand_rew("", contract_code, ("}", end)))
         else:
             self.rewritings.append(assert_rew)
 
@@ -423,7 +474,7 @@ class CheckAnnotation(Annotation):
 class InvariantAnnotation(Annotation):
 
 
-    def __init__(self, contract, annotation_str, loc, origin_loc):
+    def __init__(self, contract, annotation_str, loc, origin_loc, assign_state_references):
         self.title = "Invariant annotation"
 
         self.annotation_str = annotation_str
@@ -431,6 +482,7 @@ class InvariantAnnotation(Annotation):
         self.origin = origin_loc
 
         self.rewritings = []
+        self.assign_state_references = assign_state_references
 
         self.content = annotation_str[(annotation_str.index("(") + 1):][::-1]
         self.content = self.content[(self.content.index(")") + 1):][::-1]
@@ -440,49 +492,83 @@ class InvariantAnnotation(Annotation):
         self.functions = contract.functions
         self.original_contract = contract
 
+        self.rew_function_asserts = [] # For inherited transactions that have to be rewritten, an assert is inserted in the delegation function
+
         Annotation.__init__(self, annotation_str)
 
-    def rewrite_code(self, code, contract_range): # In the default case it returns '' empty string, to delete it before handing it over to the compiler
+    def rewrite_code(self, file_code, contract_code, contract_range): # In the default case it returns '' empty string, to delete it before handing it over to the compiler
         assertion_text = "assert(" + self.content + ");"
-
 
         for function in get_transaction_functions(self.original_contract):
             if function.constant == True: # Dont' build invariant assertions for functions that do not change storage and thus do not change invariants
                 continue
             for term_pos in function.terminating_pos:
 
-                assertion_rew = expand_rew(code, (assertion_text, term_pos[0]))
-                if after_implicit_block(code, term_pos[0]):
-                    start, end = get_exp_block_brack_pos(code, term_pos[0])
+                if 0 <= term_pos[0] < len(contract_code):
 
-                    self.rewritings.append(expand_rew(code, ("{", start)))
-                    self.rewritings.append(expand_rew(code, ("}", end)))
+                    assertion_rew = expand_rew(function.name, contract_code, (assertion_text, term_pos[0]))
+                    if after_implicit_block(contract_code, term_pos[0]):
+                        start, end = get_exp_block_brack_pos(contract_code, term_pos[0])
 
-                if term_pos[1] > 0:
-                    ret_end = term_pos[0] + term_pos[1]
-                    if not code[:ret_end].strip().endswith(';'):
-                        inc_pos = code[ret_end:].index(";") + 1
-                        ret_end += inc_pos
-                    return_content = code[term_pos[0]:ret_end]
-                    if return_content.startswith("return"):
-                        return_content = return_content[len("return"):].strip()
-                    if return_content.endswith(';'):
-                        return_content = return_content[:len(return_content) - 1].strip()
-                    if return_content:
-                        ret_var = "("
-                        for ret_idx in range(len(function.return_types)):
-                            ret_var += "sol_retvar_" + str(term_pos[0]) + "_" + str(ret_idx) + ","
-                        ret_var = ret_var[:len(ret_var)-1] + ")"
+                        self.rewritings.append(expand_rew(function.name, contract_code, ("{", start)))
+                        self.rewritings.append(expand_rew(function.name, contract_code, ("}", end)))
 
-                        self.rewritings.append(expand_rew(code, ("var " + ret_var + "="+return_content+";", term_pos[0])))
-                        self.rewritings.append(assertion_rew)
-                        self.rewritings.append(expand_rew(code, ("return " + ret_var + "; /*", term_pos[0])))
-                        self.rewritings.append(expand_rew(code, ("*/", ret_end)))
+                    if term_pos[1] > 0:
+                        ret_end = term_pos[0] + term_pos[1]
+                        if not contract_code[:ret_end].strip().endswith(';'):
+                            inc_pos = contract_code[ret_end:].index(";") + 1
+                            ret_end += inc_pos
+                        return_content = contract_code[term_pos[0]:ret_end]
+                        if return_content.startswith("return"):
+                            return_content = return_content[len("return"):].strip()
+                        if return_content.endswith(';'):
+                            return_content = return_content[:len(return_content) - 1].strip()
+                        if return_content:
+                            ret_var = "("
+                            for ret_idx in range(len(function.return_types)):
+                                ret_var += "sol_retvar_" + str(term_pos[0]) + "_" + str(ret_idx) + ","
+                            ret_var = ret_var[:len(ret_var)-1] + ")"
+
+                            self.rewritings.append(expand_rew(function.name, contract_code, ("var " + ret_var + "="+return_content+";", term_pos[0])))
+                            self.rewritings.append(assertion_rew)
+                            self.rewritings.append(expand_rew(function.name, contract_code, ("return " + ret_var + "; /*", term_pos[0])))
+                            self.rewritings.append(expand_rew(function.name, contract_code, ("*/", ret_end)))
+                        else:
+                            self.rewritings.append(assertion_rew)
                     else:
                         self.rewritings.append(assertion_rew)
+                    self.viol_rews.append(assertion_rew)
                 else:
+
+
+                    call_str = "super." + function.name + "(" + ",".join(param[0] for param in function.params) + ");"
+                    contract_end_pos = len(contract_code) - 1
+                    assertion_rew = expand_rew(function.name, contract_code, (assertion_text, contract_end_pos))
+
+                    self.rew_function_asserts.append(assertion_rew)
+                    return_types = []
+                    if " returns " in function.head:
+                        rt_str = function.head[:function.head.index(" returns ")]
+                        rt_str = rt_str[find_first_uncommented_str(rt_str, "(")+1:find_first_uncommented_str(rt_str, ")")]
+                        return_types = [rt.strip() for rt in rt_str.split(",")]
+
+
+                    ret_var = "("
+                    for ret_idx in range(len(return_types)):
+                        ret_var += "sol_retvar_" + str(function.name) + "_" + str(ret_idx) + ","
+                    ret_var = ret_var[:len(ret_var) - 1] + ")"
+
+                    if return_types and len(return_types) > 0 :
+                        self.rewritings.append(expand_rew(function.name, contract_code, ( function.head + "{var " + ret_var + "=" + call_str, contract_end_pos)))
+                    else:
+                        self.rewritings.append(expand_rew(function.name, contract_code, (function.head + "{" + call_str, contract_end_pos)))
                     self.rewritings.append(assertion_rew)
-                self.viol_rews.append(assertion_rew)
+                    if return_types and len(return_types)>0:
+                        self.rewritings.append(expand_rew(function.name, contract_code, ("return " + ret_var + ";}\n", contract_end_pos)))
+                    else:
+                        self.rewritings.append(expand_rew(function.name, contract_code, ("}\n", contract_end_pos)))
+                    self.viol_rews.append(assertion_rew)
+
 
         return self.rewritings
 
@@ -537,7 +623,7 @@ class SetRestrictionAnnotation(Annotation):
         # Todo get all storage slots from storage map
         Annotation.__init__(self, annotation_str)
 
-    def rewrite_code(self, code, contract_range):
+    def rewrite_code(self, file_code, contract_code, contract_range):
         return []
 
     def build_violations(self, sym_myth):

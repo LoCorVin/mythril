@@ -42,7 +42,7 @@ class TransactionTrace:
         # eliminate all constraints that only contain names not in the set of names from storage
         self.constraints = simplify_z3_constraints(self.constraints) # Todo simplification of the sum of constraints
 
-
+        self.state = state
 
         # Or hook transformation in here
         self.storage = {s_name: Slot(s_name, simplify(sanitize_expr(z3_vars))) for (s_name, z3_vars) in storage._storage.items()}
@@ -54,16 +54,34 @@ class TransactionTrace:
 
         # Constraints on storage keys to are necessary
         self.tran_constraints = [tra_const for tra_const in self.tran_constraints if tra_const.slot_names]
-        #self.tran_constraints = list(filter(lambda c: any([name in (self.sym_names + ["storage_" + str(s_key) for
-        #    s_key, _ in self.storage.items()]) for name in extract_sym_names(c)]), self.tran_constraints))
-
-        # Transformation
-        #self.storage = {s_name: Slot(s_name, z3_vars) for (s_name, z3_vars) in self.storage.items()}
-        #self.tran_constraints = [Constraint(constraint) for constraint in self.tran_constraints]
 
         self.sym_names.extend(flatten(self.extract_sym_names_from_constraints()))
         if lvl == 1:
             self.set_transaction_idx()
+
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k in ["state", "lvl"]:
+                setattr(result, k, v)
+            else:
+                setattr(result, k, deepcopy(v, memo))
+        return result
+
+    #def __deepcopy__(self, memodict={}):
+    #    newone = type(self)()
+    #    newone.__dict__.update(self.__dict__)
+    #    newone.constraints = deepcopy(self.constraints)
+    #    newone.functions = deepcopy(self.functions)
+    #    newone.state = self.state
+    #    newone.storage = deepcopy(self.storage)
+    #    newone.tran_constraints = deepcopy(self.tran_constraints)
+    #    newone.lvl = deepcopy(self.lvl)
+    #    newone.sym_names = deepcopy(self.sym_names)
+    #
+    #   return newone
 
 
     """   

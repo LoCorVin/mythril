@@ -2,6 +2,28 @@ import mythril.laser.ethereum.util as helper
 from mythril.laser.ethereum.transaction import ContractCreationTransaction
 from mythril.ether.soliditycontract import SourceCodeInfo
 from z3 import eq, Extract, BitVec
+from re import finditer, escape, DOTALL
+from .codeparser import find_matching_closed_bracket
+
+
+def find_contract_idx_range(contract):
+    containing_file = get_containing_file(contract)
+    contract_idx = next(finditer(r'contract\s*' + escape(contract.name) + r'(.*?){', containing_file.data, flags=DOTALL), None)
+
+    start_head = contract_idx.start()
+    end_head = contract_idx.end() - 1
+    end_contract = find_matching_closed_bracket(containing_file.data, end_head)
+    return start_head, end_head, end_contract
+
+def get_containing_file(contract):
+    contract_name = contract.name
+    containing_file = None
+    for sol_file in contract.solidity_files:
+        contract_idx = next(finditer(r'contract\s*' + escape(contract_name) + r'(.*?){', sol_file.data, flags=DOTALL), None)
+        if contract_idx:
+            containing_file = sol_file
+            break
+    return containing_file
 
 def get_si_from_state(contract, address, state):
 

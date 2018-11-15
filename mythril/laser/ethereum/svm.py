@@ -118,8 +118,22 @@ class LaserEVM:
 
 
             self.work_list += new_states
+
+            # Todo consider whether adding this to have a traversable state execution tree is woth it
+            if self.prepostprocessor.assign_state_references:
+                if not hasattr(global_state, "id"):
+                    self.prepostprocessor.set_new_state(global_state)
+                if not hasattr(global_state, "next"):
+                    global_state.next = []
+                for new_state in new_states:
+                    new_state.previous = global_state.id
+                    self.prepostprocessor.set_new_state(new_state)
+                    global_state.next.append(new_state.id)
+            # Todo End here
+
             if self.prepostprocessor:
-                new_states = self.prepostprocessor.filter(new_states)
+                new_states = self.prepostprocessor.filter(global_state, new_states)
+
 
             self.total_states += len(new_states)
             self.manage_cfg(op_code, new_states)

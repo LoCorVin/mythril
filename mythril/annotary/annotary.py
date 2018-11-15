@@ -7,12 +7,12 @@ from mythril.laser.ethereum.state import MachineState, GlobalState, Account, Env
 from mythril.laser.ethereum.transaction import ContractCreationTransaction
 from mythril.laser.ethereum.instructions import keccac_map
 
-from mythril.annotary.sn_utils import get_sourcecode_and_mapping, flatten
+from mythril.annotary.sn_utils import get_sourcecode_and_mapping, flatten, find_contract_idx_range, get_containing_file
 from mythril.annotary.transactiontrace import TransactionTrace
 from mythril.annotary.z3utility import are_z3_satisfiable
 from mythril.annotary.calldata import get_minimal_constructor_param_encoding_len, abi_json_to_abi, get_calldata_name_map
 from mythril.annotary.coderewriter import write_code, get_code, replace_comments_with_whitespace, apply_rewriting
-from mythril.annotary.codeparser import find_matching_closed_bracket, newlines, get_newlinetype
+from mythril.annotary.codeparser import find_matching_closed_bracket, newlines, get_newlinetype, find_first_uncommented_str
 from mythril.annotary.stateprocessing import AnnotationProcessor
 from mythril.annotary.annotation import annotation_kw, init_annotation, increase_rewritten_pos, comment_out_annotations, expand_rew
 from mythril.annotary.ast_parser import get_contract_ast, get_function_asts, get_function_param_tuples, get_function_term_positions, get_struct_map
@@ -52,12 +52,12 @@ laser_strategy = "dfs"
 
 class SolidityFunction:
 
-    def __init__(self, f_ast, calldata_name_map):
+    def __init__(self, f_ast, file_code, calldata_name_map):
         attributes = f_ast['attributes']
 
 
 
-
+        self.ast = f_ast
         self.constant = attributes['constant']
         self.implemented = attributes['implemented']
         self.modifiers = attributes['modifiers'] if 'modfiers' in attributes else None
@@ -69,9 +69,16 @@ class SolidityFunction:
         self.params = []
         self.src = f_ast['src']
 
+
         self.start = int(self.src[:self.src.index(":")])
         self.length = int(self.src[self.src.index(":") + 1:self.src.rfind(":")])
+        self.file_idx = int(self.src[self.src.rfind(":")+1:])
         self.end = int(self.start + self.length)
+
+
+        self.code = file_code[self.start:self.end]
+
+        self.head = self.code[:find_first_uncommented_str(self.code, "{")]
 
         self.params = get_function_param_tuples(f_ast)
         params = ""
@@ -90,7 +97,7 @@ class SolidityFunction:
         self.calldata_name_map = calldata_name_map[self.signature]
 
         # Parses the positions in the function where exution might terminated due to a return
-        self. return_types, self.terminating_pos = get_function_term_positions(f_ast)
+        self.return_types, self.terminating_pos = get_function_term_positions(f_ast)
 
 
 class SymbolicCodeExtension:
@@ -130,15 +137,7 @@ def replace_index(text, toReplace, replacement, index):
 
 
 
-def get_containing_file(contract):
-    contract_name = contract.name
-    containing_file = None
-    for sol_file in contract.solidity_files:
-        contract_idx = next(finditer(r'contract\s*' + escape(contract_name) + r'(.*?){', sol_file.data, flags=DOTALL), None)
-        if contract_idx:
-            containing_file = sol_file
-            break
-    return containing_file
+
 
 
 def augment_with_ast_info(contract):
@@ -160,33 +159,34 @@ def augment_with_ast_info(contract):
     # f_asts = get_function_asts(contract.ast)
     contract.calldata_name_map = get_calldata_name_map(abi_json_to_abi(contract.abi))
     for f_ast in f_asts:
-        contract.functions.append(SolidityFunction(f_ast, contract.calldata_name_map))
+        file = get_containing_file(contract)
+        contract.functions.append(SolidityFunction(f_ast, file.data, contract.calldata_name_map))
+        if f_ast in contract.implemented_functions:
+            contract.implemented_functions[contract.implemented_functions.index(f_ast)] = contract.functions[-1]
 
 
-def find_contract_idx_range(contract):
-    containing_file = get_containing_file(contract)
-    contract_idx = next(finditer(r'contract\s*' + escape(contract.name) + r'(.*?){', containing_file.data, flags=DOTALL), None)
 
-    start_head = contract_idx.start()
-    end_head = contract_idx.end() - 1
-    end_contract = find_matching_closed_bracket(containing_file.data, end_head)
-    return start_head, end_head, end_contract
 
 
 def get_sorting_priority(rew_text):
     if rew_text == "{":
         return 0
-    elif rew_text.startswith("var"):
+    elif rew_text.startswith("function"):
         return 1
-    elif rew_text.startswith("assert"):
+    elif rew_text.startswith("var"):
         return 2
-    elif rew_text == "return":
+    elif rew_text.startswith("super."):
         return 3
-    elif rew_text == "*/":
+    elif rew_text.startswith("assert"):
         return 4
-    elif rew_text == "}":
+    elif rew_text == "return":
         return 5
-    return 6
+    elif rew_text == "*/":
+        return 6
+    elif rew_text == "}":
+        return 7
+    return 8
+
 
 
 def get_contract_code(contract):
@@ -292,7 +292,8 @@ class Annotary:
                     self.annotation_map[contract.name] = []
                 while annot_iter:
                     origin = get_origin_pos_line_col(contract_file.data[:contract.contract_range[0]+annot_iter.start()])
-                    annotation = init_annotation(contract, code, annot_iter.group(), kw, annot_iter.start(), annot_iter.end(), origin)
+                    annotation = init_annotation(contract, code, annot_iter.group(), kw, annot_iter.start(),
+                                                 annot_iter.end(), origin, self.config)
                     if annotation:
                         self.annotation_map[contract.name].append(annotation)
                     annot_iter = next(annot_iterator, None)
@@ -300,31 +301,31 @@ class Annotary:
 
 
     def build_annotated_contracts(self):
-
+        file_rewritings = {}
 
         for contract in self.contracts:
             if contract.name not in self.annotation_map:
                 continue
             annotations = self.annotation_map[contract.name]
             sol_file = get_containing_file(contract)
-            origin_file_code = sol_file.data
+            file_code = sol_file.data
 
             contract_range = find_contract_idx_range(contract)
-            origin_contract_code = origin_file_code[contract_range[0]:(contract_range[2] + 1)]
+            contract_code = file_code[contract_range[0]:(contract_range[2] + 1)]
 
             # Todo Subtract contract offset
 
-            contract_prefix = origin_file_code[:contract_range[0]]
-            contract_suffix = origin_file_code[(contract_range[2] + 1):]
+            contract_prefix = file_code[:contract_range[0]]
+            contract_suffix = file_code[(contract_range[2] + 1):]
 
-            contract_prefix_as_rew = expand_rew(origin_contract_code, (contract_prefix, 0))
+            contract_prefix_as_rew = expand_rew("", contract_code, (contract_prefix, 0))
 
-            rew_contract_code = origin_contract_code
+            rew_contract_code = contract_code
 
             rewritings = []
 
             for annotation in annotations:
-                rewritings.extend(annotation.rewrite_code(origin_contract_code, contract_range))
+                rewritings.extend(annotation.rewrite_code(file_code, contract_code, contract_range))
 
             rewriting_set = []
             for rewriting in rewritings:
@@ -332,14 +333,14 @@ class Annotary:
                     rewriting_set.append(rewriting)
             rewritings = rewriting_set
 
-            rewritings = sorted(rewritings, key=lambda rew:(rew.pos, get_sorting_priority(rew.text)))
+            rewritings = sorted(rewritings, key=lambda rew:(rew.pos, rew.gname, get_sorting_priority(rew.text)))
 
             for rew_idx in range(len(rewritings)):
                 rew = rewritings[rew_idx]
                 rew_contract_code = apply_rewriting(rew_contract_code, rew)
-                increase_rewritten_pos(rewritings, rewritings[rew_idx], get_newlinetype(origin_file_code))
+                increase_rewritten_pos(rewritings, rewritings[rew_idx], get_newlinetype(file_code))
 
-            increase_rewritten_pos(rewritings, contract_prefix_as_rew, get_newlinetype(origin_file_code))
+            increase_rewritten_pos(rewritings, contract_prefix_as_rew, get_newlinetype(file_code))
 
             rew_file_code = contract_prefix + rew_contract_code + contract_suffix
 
@@ -355,13 +356,14 @@ class Annotary:
             augment_with_ast_info(annotation_contract)
             annotation_contract.rewritings = rewritings
             # Todo maybe i dont need this
-            annotation_contract.origin_file_code = origin_file_code
+            annotation_contract.origin_file_code = file_code
+            annotation_contract.original_contract = contract
             self.annotated_contracts.append(annotation_contract)
 
             for annotation in self.annotation_map[contract.name]:
                 annotation.set_annotation_contract(annotation_contract)
 
-            write_code(sol_file.filename, origin_file_code)
+            write_code(sol_file.filename, file_code)
 
 
 
@@ -384,7 +386,8 @@ class Annotary:
         annotationsProcessor = None
         if any([len( annotation.viol_rew_instrs) > 0 for annotation in self.annotation_map[contract.name]]):
             annotationsProcessor = AnnotationProcessor(contract.creation_disassembly.instruction_list,
-                                                   contract.disassembly.instruction_list, create_ignore_list, trans_ignore_list, contract)
+                                        contract.disassembly.instruction_list, create_ignore_list, trans_ignore_list,
+                                        contract, self.config.assign_state_references)
 
         # Symbolic execution of construction and transactions
         printd("Constructor and Transaction")
@@ -397,8 +400,15 @@ class Annotary:
         if self.max_depth:
             self.config.mythril_depth = self.max_depth
         printd("Sym Exe: " + str(contract.name))
+        start = time.time()
         sym_transactions = SymExecWrapper(contract, self.address, laser_strategy, dynloader, max_depth=self.config.mythril_depth,
                                           prepostprocessor=annotationsProcessor, code_extension=sym_code_extension) # Todo Mix the annotation Processors or mix ignore listst
+
+        contract.states = annotationsProcessor.states
+        contract.config = self.config
+
+        end = time.time()
+        # print(end - start)
         if annotationsProcessor:
             printd("Construction Violations: " + str(len(reduce(lambda x, y: x + y, annotationsProcessor.create_violations, []))))
             printd("Transaction Violations: " + str(len(reduce(lambda x, y: x + y, annotationsProcessor.trans_violations, []))))
@@ -501,6 +511,8 @@ def is_storage_primitive(storage):
             if isinstance(content, int) or not eq(content, BitVec("storage[" + str(index) + "]", 256)):
                 return False
     return True
+
+
 
 def get_traces(statespace, contract):
     states = []

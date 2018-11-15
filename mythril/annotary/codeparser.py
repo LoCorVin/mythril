@@ -48,6 +48,28 @@ def get_transaction_functions(contract):
                 t_functions.append(func)
     return t_functions
 
+def find_first_uncommented_str(code, search_str):
+    while len(code)>0:
+        line_comment, block_comment = len(code), len(code)
+        if "//" in code:
+            line_comment = code.index("//")
+        if "/*" in code:
+            line_comment = code.index("/*")
+        if search_str not in code:
+            return -1
+        index_search_str = code.index(search_str)
+        if index_search_str < line_comment and index_search_str < block_comment:
+            return index_search_str
+        if line_comment < block_comment:
+            code = code[line_comment:]
+            if "\n" in code:
+                code = code[code.index("\n")+1:]
+            else:
+                code = ""
+        elif block_comment < line_comment:
+            code = code[block_comment:]
+            code = code[code.index("*/")]
+
 def find_matching_closed_bracket(filedata, bracket_idx):
     nwl = get_newlinetype(filedata)
     bracket = filedata[bracket_idx]

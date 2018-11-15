@@ -55,10 +55,12 @@ def get_all_functions_for_contract(contract):
         for contract_ast in contract_asts:
             if contract_ast['attributes']['name'] == contract.name:
                 main_contract_ast = contract_ast
-    functions = get_function_asts(main_contract_ast)
+    contract.implemented_functions = get_function_asts(main_contract_ast)
+    functions = []
+    functions.extend(contract.implemented_functions)
     if not hasattr(main_contract_ast['attributes'], 'linearizedBaseContracts') \
         and len(main_contract_ast['attributes']['linearizedBaseContracts']) <= 1:
-        return functions
+        return contract.implemented_functions
     linearizedBaseContracts = main_contract_ast['attributes']['linearizedBaseContracts'][1:]
     for contract_id in linearizedBaseContracts:
         for contract_ast in contract_asts:

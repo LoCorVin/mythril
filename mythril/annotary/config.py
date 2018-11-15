@@ -7,11 +7,12 @@ class Config:
         self.chain_verification = True
         self.max_transaction_depth = 3
         self.mythril_depth = 25
+        self.assign_state_references = True
 
         if filepath:
             with open(filepath) as config_file:
                 config = loads(config_file.read())
                 for k, v in config.items():
-                    if hasattr(self,k):
+                    if hasattr(self, k):
                         setattr(self, k, v)
 
