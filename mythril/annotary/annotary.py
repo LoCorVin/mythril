@@ -403,8 +403,9 @@ class Annotary:
         start = time.time()
         sym_transactions = SymExecWrapper(contract, self.address, laser_strategy, dynloader, max_depth=self.config.mythril_depth,
                                           prepostprocessor=annotationsProcessor, code_extension=sym_code_extension) # Todo Mix the annotation Processors or mix ignore listst
-
-        contract.states = annotationsProcessor.states
+        contract.states = []
+        if annotationsProcessor:
+            contract.states = annotationsProcessor.states
         contract.config = self.config
 
         end = time.time()

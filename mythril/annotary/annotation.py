@@ -71,30 +71,49 @@ def get_annotation_content(code, content_start):
     return code[(content_start + len(m_string)):closed_idx], len(m_string)
 
 
-def get_annotated_members(contract, code, start, annotation_length):
-    preceded_member = None
-    for member in contract.storage_members:
-        if start > member.src[0] - contract.contract_range[0] and start <= member.src[0] + member.src[1] - contract.contract_range[0]:
-            return [member] # inside_member
-        elif start > member.src[0] - contract.contract_range[0] and (not preceded_member or member.src[0] > preceded_member.src[0]):
-            preceded_member = member
+def get_annotated_members(contract, code, start, content, annotation_length):
 
-    semic_idx = code[:start].rfind(';') if ';' in code[:start] else 0
-    preceding_nwl_idx = code[:start].rfind('\n') if '\n' in code[:start] else 0
+    if ";" in content and any([part.startswith("var=") for part in content.split(";")]):
+        annotated_members = []
+        defined_members = None
+        for part in content.split(";"):
+            if part.startswith('var='):
+                defined_members = part[4:].split(",")
+        for defined_member in defined_members:
+            if len(defined_member.split('.')) == 2:
+                c_name, var_name = defined_member.split('.')
+            else:
+                c_name, var_name = None, defined_member
+            for member in contract.storage_members[::-1]:
+                if member.name == var_name:
+                    if not c_name or c_name == member.declaring_contract:
+                        annotated_members.append(member)
+                        break
+        return annotated_members
+    else:
+        preceded_member = None
+        for member in contract.storage_members:
+            if start > member.src[0] - contract.contract_range[0] and start <= member.src[0] + member.src[1] - contract.contract_range[0]:
+                return [member] # inside_member
+            elif start > member.src[0] - contract.contract_range[0] and (not preceded_member or member.src[0] > preceded_member.src[0]):
+                preceded_member = member
+
+        semic_idx = code[:start].rfind(';') if ';' in code[:start] else 0
+        preceding_nwl_idx = code[:start].rfind('\n') if '\n' in code[:start] else 0
 
 
-    if preceded_member.src[0] - contract.contract_range[0] > semic_idx:
-        return [preceded_member]
+        if preceded_member.src[0] - contract.contract_range[0] > semic_idx:
+            return [preceded_member]
 
-    if not preceded_member or preceded_member.src[0] - contract.contract_range[0] + preceded_member.src[1] < preceding_nwl_idx:
-        raise SyntaxError("Member Annotation has to be in the same line as parts of a member definition")
+        if not preceded_member or preceded_member.src[0] - contract.contract_range[0] + preceded_member.src[1] < preceding_nwl_idx:
+            raise SyntaxError("Member Annotation has to be in the same line as parts of a member definition")
 
-    sameline_members = []
-    for member in contract.storage_members:
-        if member.src[0] - contract.contract_range[0] > preceding_nwl_idx and member.src[0] - contract.contract_range[0] < start:
-            sameline_members.append(member)
+        sameline_members = []
+        for member in contract.storage_members:
+            if member.src[0] - contract.contract_range[0] > preceding_nwl_idx and member.src[0] - contract.contract_range[0] < start:
+                sameline_members.append(member)
 
-    return sameline_members
+        return sameline_members
 
 
 
@@ -108,7 +127,7 @@ def init_annotation(contract, code, head, kw, start, end, origin, config):
                                    get_pos_line_col(code[:start]), origin, config.assign_state_references)
     elif kw == "set_restricted":
         content, content_prefix = get_annotation_content(code, start + len(head))
-        member_vars = get_annotated_members(contract, code, start, len(head + content) + 2)
+        member_vars = get_annotated_members(contract, code, start, content, len(head + content) + 2)
         return SetRestrictionAnnotation(contract, code[start:(end + content_prefix)] + content + ")", content,
                 member_vars, get_pos_line_col(code[:start]), origin)
 
@@ -604,6 +623,8 @@ class SetRestrictionAnnotation(Annotation):
 
         self.content = annotation_str[(annotation_str.index("(") + 1):][::-1]
         self.content = self.content[(self.content.index(")") + 1):][::-1]
+        if ";" in self.content:
+            self.content = ",".join(list(filter(lambda p: not p.startswith("var="), self.content.split(";"))))
 
 
 
@@ -611,12 +632,12 @@ class SetRestrictionAnnotation(Annotation):
         self.restricted_f = []
         self.storage_slot_map = {}
         self.contract = contract
-        for restriction in content.split(","):
+        for restriction in self.content.split(","):
             restriction = sub('\s','',restriction)
             self.restricted_f.append(restriction)
 
         for m_var in member_variables:
-            self.storage_slot_map[m_var.name] = contract.storage_map[m_var.name]
+            self.storage_slot_map[m_var.declaring_contract + "." + m_var.name] = contract.storage_map[m_var.declaring_contract + "."+ m_var.name]
 
         self.member_variables = member_variables
 

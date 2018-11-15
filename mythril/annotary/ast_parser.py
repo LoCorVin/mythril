@@ -71,9 +71,34 @@ def get_all_functions_for_contract(contract):
         functions.extend(base_functions)
     return functions
 
-def function_override(f1_ast, f2_ast):
-    pass
+def get_all_members_for_contract(contract):
+    contract_asts = []
+    for file in contract.solidity_files:
+        contract_asts.extend(get_all_nested_dicts_with_kv_pairs(file.ast, "name", "ContractDefinition"))
+    main_contract_ast = contract.ast if hasattr(contract, "ast") else None
+    if not main_contract_ast:
+        for contract_ast in contract_asts:
+            if contract_ast['attributes']['name'] == contract.name:
+                main_contract_ast = contract_ast
+    members = augment_with_contract_name(get_contract_members(get_contract_members(main_contract_ast)),
+                                         main_contract_ast['attributes']['name'])
+    if not hasattr(main_contract_ast['attributes'], 'linearizedBaseContracts') \
+        and len(main_contract_ast['attributes']['linearizedBaseContracts']) <= 1:
+        return contract.members
+    linearizedBaseContracts = main_contract_ast['attributes']['linearizedBaseContracts'][1:]
+    for contract_id in linearizedBaseContracts:
+        for contract_ast in contract_asts:
+            if contract_ast['id'] == contract_id:
+                next_base_contract = contract_ast
+                break
+        base_members = augment_with_contract_name(get_contract_members(next_base_contract), next_base_contract['attributes']['name'])
+        members[:0] = base_members # Prepend members
+    return members
 
+def augment_with_contract_name(m_asts, contract_name):
+    for m_ast in m_asts:
+        m_ast["attributes"]['declaringContract'] = contract_name
+    return m_asts
 
 
 def get_contract_ast(ast, contract_name):
@@ -85,6 +110,7 @@ def get_contract_ast(ast, contract_name):
 
 def get_function_asts(contract_ast):
     return get_all_nested_dicts_with_kv_pairs(contract_ast, "name", "FunctionDefinition")
+
 
 def get_function_term_positions(f_ast):
     # Todo ignore functions that definitely do not change anything for @invariant
@@ -118,7 +144,7 @@ def get_function_param_tuples(f_ast):
         params += param['attributes']['type'] + ","
     return param_tpls
 
-def get_contract_storage_members(contract_ast):
+def get_contract_members(contract_ast):
     var_defs = get_all_nested_dicts_with_kv_pairs(contract_ast, 'name', 'VariableDeclaration')
     return list(filter(lambda vdef: vdef['attributes']['stateVariable'],var_defs))
 

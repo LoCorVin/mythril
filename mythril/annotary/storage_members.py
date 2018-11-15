@@ -1,4 +1,4 @@
-from mythril.annotary.ast_parser import get_contract_storage_members
+from mythril.annotary.ast_parser import get_all_members_for_contract
 from mythril.annotary.codeparser import find_matching_closed_bracket
 from functools import reduce
 from mythril.annotary.z3utility import are_z3_satisfiable
@@ -37,6 +37,7 @@ class SolidityMember:
         attributes = m_ast['attributes']
         self.constant = attributes['constant']
         self.name = attributes['name']
+        self.declaring_contract = attributes["declaringContract"]
         self.scope = attributes['scope']
         self.stateVariable = attributes['stateVariable']
         self.storageLocation = attributes['storageLocation']
@@ -200,7 +201,7 @@ class BytesSlot(StorageSlot):
 
 def extract_storage_map(contract, struct_map):
     storage_members = []
-    var_defs = get_contract_storage_members(contract.ast)
+    var_defs = get_all_members_for_contract(contract)
     for var_def in var_defs:
         storage_members.append(SolidityMember(var_def))
     contract.storage_members = storage_members
@@ -214,7 +215,7 @@ def extract_storage_map(contract, struct_map):
     for member in storage_members:
         m_type = member.type
         m_info, slot_counter, bit_counter = get_storage_mapping_for_types(contract.ast, struct_map, m_type, slot_counter, bit_counter)
-        storage_map[member.name] = m_info
+        storage_map[member.declaring_contract + "." + member.name] = m_info
         for slot in m_info:
             slot.member = member
     return storage_map
