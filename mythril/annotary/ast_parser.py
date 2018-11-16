@@ -84,7 +84,7 @@ def get_all_members_for_contract(contract):
                                          main_contract_ast['attributes']['name'])
     if not hasattr(main_contract_ast['attributes'], 'linearizedBaseContracts') \
         and len(main_contract_ast['attributes']['linearizedBaseContracts']) <= 1:
-        return contract.members
+        return contract.members if hasattr(contract, "members") else []
     linearizedBaseContracts = main_contract_ast['attributes']['linearizedBaseContracts'][1:]
     for contract_id in linearizedBaseContracts:
         for contract_ast in contract_asts:
