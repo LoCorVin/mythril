@@ -94,7 +94,7 @@ class SolidityFunction:
             self.signature = self.name + "(" + params + ")"
             self.hash = utils.sha3(self.signature)[:4].hex()
 
-        self.calldata_name_map = calldata_name_map[self.signature]
+        self.calldata_name_map = calldata_name_map[self.signature] if self.signature in calldata_name_map else []
 
         # Parses the positions in the function where exution might terminated due to a return
         self.return_types, self.terminating_pos = get_function_term_positions(f_ast)

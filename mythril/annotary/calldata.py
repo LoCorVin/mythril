@@ -8,13 +8,13 @@ import sys
 from .codeparser import find_matching_closed_bracket
 from .sn_utils import flatten
 
-class CalldataMap:
-
-    def __init__(self, abi, solc_v):
-        pass
-
-    def __init__(self, solidity_file, solc_v):
-        pass
+#class CalldataMap:
+#
+#    def __init__(self, abi, solc_v):
+#        pass
+#
+#    def __init__(self, solidity_file, solc_v):
+#       pass
 
 def get_minimal_byte_enc_len(abi_obj):
     if type(abi_obj) == list:
