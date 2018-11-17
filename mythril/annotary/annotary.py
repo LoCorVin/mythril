@@ -293,7 +293,7 @@ class Annotary:
                 while annot_iter:
                     origin = get_origin_pos_line_col(contract_file.data[:contract.contract_range[0]+annot_iter.start()])
                     annotation = init_annotation(contract, code, annot_iter.group(), kw, annot_iter.start(),
-                                                 annot_iter.end(), origin, self.config)
+                                                    annot_iter.end(), origin, self.config)
                     if annotation:
                         self.annotation_map[contract.name].append(annotation)
                     annot_iter = next(annot_iterator, None)
