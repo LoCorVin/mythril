@@ -81,7 +81,7 @@ def get_minimal_constructor_param_encoding_len(abi):
                 return get_minimal_byte_enc_len(con_inputs)
         except KeyError:
             printd("ABI does not contain inputs for constructor")
-    return -1
+    return 0
 
 def get_calldata_name_map(abi):
     calldata_mappings = {}
