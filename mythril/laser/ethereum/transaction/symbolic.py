@@ -12,7 +12,7 @@ def execute_message_call(laser_evm, callee_address):
     open_states = laser_evm.open_states[:]
     del laser_evm.open_states[:]
 
-    open_world_state  = open_states[0]
+    open_world_state = open_states[0]
     open_world_state.accounts = deepcopy(open_world_state.accounts)
     open_world_state[callee_address].storage = Storage()
 
@@ -31,7 +31,7 @@ def execute_message_call(laser_evm, callee_address):
     laser_evm.exec()
 
 
-def execute_contract_creation(laser_evm, contract_initialization_code, contract_name, code_extension=None):
+def execute_contract_creation(laser_evm, contract_initialization_code, contract_name, code_extension=None, callvalue=BitVec("callvalue", 256)):
     """ Executes a contract creation transaction from all open states"""
     open_states = laser_evm.open_states[:]
     del laser_evm.open_states[:]
@@ -46,7 +46,7 @@ def execute_contract_creation(laser_evm, contract_initialization_code, contract_
             Disassembly(contract_initialization_code),
             [],
             BitVec("gasprice", 256),
-            BitVec("callvalue", 256),
+            callvalue,
             BitVec("origin", 256),
             CalldataType.SYMBOLIC
         )

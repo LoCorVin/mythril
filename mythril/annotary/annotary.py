@@ -102,15 +102,18 @@ class SolidityFunction:
 
 class SymbolicCodeExtension:
 
-    def __init__(self, symbolic_name, contract_name, extension_byte_size):
+    def __init__(self, symbolic_name, contract_name, extension_byte_size, predefined_map={}):
         self.symbolic_name = symbolic_name
         self.contract_name = contract_name
         self.extension_byte_size = extension_byte_size
+        self.predifined_map = predefined_map
 
     def __len__(self):
         return self.extension_byte_size
 
     def __getitem__(self, item):
+        if item in self.predifined_map:
+            return self.predifined_map[item]
         return BitVec(self.symbolic_name + "_" + self.contract_name + "[" + str(item) + "]", 256)
 
 
@@ -387,7 +390,7 @@ class Annotary:
         if any([len( annotation.viol_rew_instrs) > 0 for annotation in self.annotation_map[contract.name]]):
             annotationsProcessor = AnnotationProcessor(contract.creation_disassembly.instruction_list,
                                         contract.disassembly.instruction_list, create_ignore_list, trans_ignore_list,
-                                        contract, self.config.assign_state_references)
+                                        contract)
 
         # Symbolic execution of construction and transactions
         printd("Constructor and Transaction")
@@ -404,8 +407,8 @@ class Annotary:
         sym_transactions = SymExecWrapper(contract, self.address, laser_strategy, dynloader, max_depth=self.config.mythril_depth,
                                           prepostprocessor=annotationsProcessor, code_extension=sym_code_extension) # Todo Mix the annotation Processors or mix ignore listst
         contract.states = []
-        if annotationsProcessor:
-            contract.states = annotationsProcessor.states
+
+        contract.states = sym_transactions.laser.state_id_assigner.states
         contract.config = self.config
 
         end = time.time()

@@ -54,8 +54,7 @@ class AnnotationProcessor(PrePostProcessor):
     # mythril analysis modules on the modified contract might give different results due to the processing of nodes and not states
     # actual but previous insturction that might me on the ignore list.
 
-    def __init__(self, create_instructions, trans_instructions, create_ignore_list, trans_ignore_list, contract,
-                 assign_state_references=False):
+    def __init__(self, create_instructions, trans_instructions, create_ignore_list, trans_ignore_list, contract):
 
         self.contract = contract
 
@@ -72,15 +71,6 @@ class AnnotationProcessor(PrePostProcessor):
             self.create_violations.append([])
         self.state_ctr = 0
         self.restored_ids = []
-        self.assign_state_references = assign_state_references
-        self.states = []
-
-        self.state_id = 0
-
-    def set_new_state(self, state):
-        state.id = self.state_id
-        self.states.append(state)
-        self.state_id += 1
 
     def check_configuration(self, svm):
         if svm.strategy != DepthFirstSearchStrategy:

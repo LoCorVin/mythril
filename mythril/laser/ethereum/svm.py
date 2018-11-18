@@ -1,9 +1,9 @@
-from z3 import BitVec
+from z3 import BitVec, BitVecVal
 import logging
 from mythril.laser.ethereum.state import WorldState
 from mythril.annotary.debugc import printd
 from mythril.laser.ethereum.transaction import TransactionStartSignal, TransactionEndSignal, \
-    ContractCreationTransaction
+    ContractCreationTransaction, CreateNewContractSignal
 from mythril.laser.ethereum.instructions import Instruction
 from mythril.laser.ethereum.cfg import NodeFlags, Node, Edge, JumpType
 from mythril.laser.ethereum.strategy.basic import DepthFirstSearchStrategy
@@ -15,11 +15,38 @@ from mythril.laser.ethereum.transaction import execute_contract_creation, execut
 TT256 = 2 ** 256
 TT256M1 = 2 ** 256 - 1
 
+class StateIdAssigner:
+
+    def __init__(self):
+        self.states = []
+        self.state_id = 0
+
+    def set_new_state(self, state):
+        state.id = self.state_id
+        self.states.append(state)
+        self.state_id += 1
+
+
 
 class SVMError(Exception):
     pass
 
 
+class SymbolicCodeExtension:
+
+    def __init__(self, symbolic_name, contract_name, extension_byte_size, predefined_map={}):
+        self.symbolic_name = symbolic_name
+        self.contract_name = contract_name
+        self.extension_byte_size = extension_byte_size
+        self.predifined_map = predefined_map
+
+    def __len__(self):
+        return self.extension_byte_size
+
+    def __getitem__(self, item):
+        if item in self.predifined_map:
+            return self.predifined_map[item]
+        return BitVec(self.symbolic_name + "_" + self.contract_name + "[" + str(item) + "]", 256)
 '''
 Main symbolic execution engine.
 '''
@@ -62,6 +89,8 @@ class LaserEVM:
         else:
             self.prepostprocessor = None
 
+        self.state_id_assigner = StateIdAssigner()
+
         logging.info("LASER EVM initialized with dynamic loader: " + str(dynamic_loader))
 
     @property
@@ -82,6 +111,7 @@ class LaserEVM:
             if len(self.open_states) == 0:
                 print("No contract was created during the execution of contract creation "
                       "Try to increase the resources for creation exection (max-depth or create_timeout)")
+            printd("Finished outer creation")
 
             # Reset code coverage
             self.coverage = {}
@@ -120,15 +150,16 @@ class LaserEVM:
             self.work_list += new_states
 
             # Todo consider whether adding this to have a traversable state execution tree is woth it
-            if self.prepostprocessor and self.prepostprocessor.assign_state_references:
-                if not hasattr(global_state, "id"):
-                    self.prepostprocessor.set_new_state(global_state)
-                if not hasattr(global_state, "next"):
-                    global_state.next = []
-                for new_state in new_states:
-                    new_state.previous = global_state.id
-                    self.prepostprocessor.set_new_state(new_state)
-                    global_state.next.append(new_state.id)
+
+
+            if not hasattr(global_state, "id"):
+                self.state_id_assigner.set_new_state(global_state)
+            if not hasattr(global_state, "next"):
+                global_state.next = []
+            for new_state in new_states:
+                new_state.previous = global_state.id
+                self.state_id_assigner.set_new_state(new_state)
+                global_state.next.append(new_state.id)
             # Todo End here
 
             if self.prepostprocessor:
@@ -159,10 +190,46 @@ class LaserEVM:
             if self.prepostprocessor:
                 new_global_states = self.prepostprocessor.postprocess(global_state, new_global_states)
 
+        except CreateNewContractSignal as c:
+            laser_evm = LaserEVM(self.accounts, self.dynamic_loader, self.max_depth, self.execution_timeout, self.create_timeout,
+                 strategy=DepthFirstSearchStrategy, prepostprocessor=self.prepostprocessor)
+
+            laser_evm.open_states = [self.world_state]
+            printd("Start subconstruction")
+            code_extension = SymbolicCodeExtension("calldata", "Subcontract", c.extension_byte_size, c.predefined_map)
+            created_account = execute_contract_creation(laser_evm, c.bytecode, contract_name="Subcontract",
+                        code_extension=code_extension, callvalue=c.callvalue)
+            paused_state = c.paused_state
+            paused_state.accounts[created_account.address] = created_account
+
+            # Cpmputing address from hex str returned to z3 BitVec representation
+            address_as_int = 0
+            new_address = created_account.address.replace("0x", "")
+            #i = len(new_address)
+            #while i > 0:
+            #    address_as_int *= 256
+            #    address_as_int += int(new_address[i-2:i], 16)
+            #    i -= 2
+            i = 0
+            while i < len(new_address):
+                address_as_int *= 256
+                address_as_int += int(new_address[i:i + 2], 16)
+                i += 2
+
+
+            paused_state.mstate.stack.append(BitVecVal(address_as_int, 256))
+            paused_state.mstate.pc += 1 # Because the post code of instruction wrapper was not executed after Signal
+            new_global_states = [paused_state]
+
+            if self.prepostprocessor:
+                new_global_states = self.prepostprocessor.postprocess(global_state, new_global_states)
+            printd("End subcontruction")
+
         except TransactionStartSignal as e:
             printd("Transaction start")
             # Setup new global state
             new_global_state = e.transaction.initial_global_state()
+
 
             new_global_state.transaction_stack = copy(global_state.transaction_stack) + [(e.transaction, global_state)]
             new_global_state.node = global_state.node
@@ -170,7 +237,7 @@ class LaserEVM:
 
             return [new_global_state], op_code
 
-        except TransactionEndSignal as e: # Todo Watch out here
+        except TransactionEndSignal as e:
             printd("Transaction end")
             transaction, return_global_state = e.global_state.transaction_stack.pop()
 

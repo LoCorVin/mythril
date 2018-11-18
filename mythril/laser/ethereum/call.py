@@ -51,7 +51,7 @@ def get_callee_address(global_state:GlobalState, dynamic_loader: DynLoader, symb
     except AttributeError:
         logging.info("Symbolic call encountered")
 
-        match = re.search(r'storage_(\d+)', str(simplify(symbolic_to_address)))
+        match = re.search(r'storage[(\d+)]', str(simplify(symbolic_to_address)))
         logging.debug("CALL to: " + str(simplify(symbolic_to_address)))
 
         if match is None or dynamic_loader is None:

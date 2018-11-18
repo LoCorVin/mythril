@@ -137,6 +137,16 @@ def init_annotation(contract, code, head, kw, start, end, origin, config):
     elif kw == "ethersource":
         pass
 
+def get_matching_state(contract, f, param, init_state):
+    states = contract.states
+    while True:
+        if f(param, init_state):
+            return init_state
+        if hasattr(init_state, "previous"):
+            init_state = states[init_state.previous]
+        else:
+            return None
+
 
 def increase_rewritten_pos(ano_rewritings, rewriting, nwl_type="\n"):
     for ano_rewriting in ano_rewritings:
@@ -608,6 +618,23 @@ class InvariantAnnotation(Annotation):
     def get_violations_description(self): # Returns a tuple or list of tuples with description, assoviated line and string to highlight.
         raise NotImplementedError("Abstract function of Annotation abstraction")
 
+
+def specific_code_location_with_mapping(contract, state):
+    si_and_mapping = get_si_from_state(contract, state.instruction['address'], state)
+    if not si_and_mapping:
+        return False
+    si, mapping = si_and_mapping
+    return not si.code.startswith("function ") and not si.code.startswith("contract ") and state.instruction['opcode'] in ["DELEGATECALL", "CALLCODE"]
+
+#def specific_code_location_with_mapping(contract, state):
+#    si_and_mapping = get_si_from_state(contract, state.instruction['address'], state)
+#    if not si_and_mapping:
+#        return False
+#    si, mapping = si_and_mapping
+#    return not si.code.startswith("function ") and not si.code.startswith("contract ") and state.current_transaction.code \
+#           and state.environment.active_account.code and state.current_transaction.code.bytecode == state.environment.active_account.code.bytecode
+
+
 class SetRestrictionAnnotation(Annotation):
 
     # Any function name, or signature, 'constructor' or contract name for constructor, empty content or '()' as parameter
@@ -632,9 +659,10 @@ class SetRestrictionAnnotation(Annotation):
         self.restricted_f = []
         self.storage_slot_map = {}
         self.contract = contract
-        for restriction in self.content.split(","):
-            restriction = sub('\s','',restriction)
-            self.restricted_f.append(restriction)
+        if len(self.content) > 0:
+            for restriction in self.content.split(","):
+                restriction = sub('\s','',restriction)
+                self.restricted_f.append(restriction)
         for m_var in member_variables:
             self.storage_slot_map[m_var.declaring_contract + "." + m_var.name] = contract.storage_map[m_var.declaring_contract + "."+ m_var.name]
 
@@ -653,9 +681,22 @@ class SetRestrictionAnnotation(Annotation):
                 if state.instruction['opcode'] == "SSTORE":
                     function = None
                     is_fallback = False
-                    in_constructor = isinstance(state.current_transaction, ContractCreationTransaction)
+
+                    matching_state = state
+                    si_and_mapping = get_si_from_state(self.annotation_contract, matching_state.instruction['address'],
+                                                       matching_state)
+                    if not si_and_mapping: # If no mapping was found we are analyzing bytecode -> backtrack until we find the caller of said bytecode
+                        matching_state = get_matching_state(self.annotation_contract,
+                                                            specific_code_location_with_mapping,
+                                                            self.annotation_contract, state)
+                        if not matching_state:
+                            continue  # When violation of same structor happens in different contract and thus not violating this annotated member var
+
+
+
+                    in_constructor = isinstance(matching_state.current_transaction, ContractCreationTransaction)
                     if not in_constructor:
-                        function = get_function_from_constraints(self.contract, state.mstate.constraints, isinstance(state.current_transaction, ContractCreationTransaction))
+                        function = get_function_from_constraints(self.contract, matching_state.mstate.constraints, in_constructor)
                         if function:
                             printd(function.name)
                         else:
@@ -664,20 +705,25 @@ class SetRestrictionAnnotation(Annotation):
                             except IndexError:
                                 raise SyntaxError("Targeted unexisting fallback function")
                             is_fallback = True # Todo Don't forget to add fallback
+
                     # Skipp if function is somehow mentioned in the restricted list
                     if function and (function.name in self.restricted_f or function.signature in self.restricted_f) or in_constructor and ("constructor" in self.restricted_f
                         or self.contract.name in self.restricted_f or any([restriction.startswith(self.contract.name + "(") for restriction in self.restricted_f])):
                         continue
+
                     for member_name, storage_slots in self.storage_slot_map.items():
                         for storage_slot in storage_slots:
-                            may_write_to, constraints = storage_slot.may_write_to(state.mstate.stack[-1], state.mstate.stack[-2], state.environment.active_account.storage._storage, state.mstate.constraints)
+                            may_write_to, constraints = storage_slot.may_write_to(state.mstate.stack[-1],
+                                    state.mstate.stack[-2], state.environment.active_account.storage._storage, state.mstate.constraints)
                             if may_write_to:
-                                # Todo Add more information to the single violation, e.g. here, which variable is or may be overwritten
-                                src_info, mapping = get_si_from_state(self.annotation_contract, state.instruction['address'], state)
+
+                                si_and_mapping = get_si_from_state(self.annotation_contract, matching_state.instruction['address'], matching_state)
+
+                                src_info, mapping = si_and_mapping
                                 printd("Contract may write to forbidden slot: " + str(src_info.lineno) + ":: " + src_info.code)
-                                new_state = state
+                                new_state = matching_state
                                 if constraints and len(constraints) > 0:
-                                    new_state = deepcopy(state) # update with the assumtion taken by the may_write
+                                    new_state = deepcopy(matching_state) # update with the assumtion taken by the may_write
                                     new_state.mstate.constraints.extend(constraints)
                                 self.add_violations([new_state], mapping, self.contract, member_name,
                                     vio_description="This statement may write to the member variable '" + storage_slot.member.name

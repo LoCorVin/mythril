@@ -17,6 +17,15 @@ class TransactionStartSignal(Exception):
         self.transaction = transaction
         self.op_code = op_code
 
+class CreateNewContractSignal(Exception):
+    """ Exception raised when a new contract is created"""
+    def __init__(self, bytecode, predefined_map, extension_byte_size, paused_state, callvalue):
+        self.bytecode = bytecode
+        self.extension_byte_size = extension_byte_size
+        self.predefined_map = predefined_map
+        self.paused_state = paused_state
+        self.callvalue = callvalue
+
 
 class MessageCallTransaction:
     """ Transaction object models an transaction"""

@@ -14,7 +14,8 @@ from mythril.laser.ethereum import util
 from mythril.laser.ethereum.call import get_call_parameters
 from mythril.laser.ethereum.state import GlobalState, MachineState, Environment, CalldataType
 import mythril.laser.ethereum.natives as natives
-from mythril.laser.ethereum.transaction import MessageCallTransaction, TransactionEndSignal, TransactionStartSignal, ContractCreationTransaction
+from mythril.laser.ethereum.transaction import MessageCallTransaction, TransactionEndSignal, TransactionStartSignal, \
+    ContractCreationTransaction, CreateNewContractSignal
 
 keccac_map = {}
 
@@ -623,7 +624,7 @@ class Instruction:
                 global_state.mstate.memory[concrete_memory_offset + i] =\
                     int(bytecode[2*(concrete_code_offset + i): 2*(concrete_code_offset + i + 1)], 16)
             else:
-                if concrete_code_offset + i + 1 <= len(bytecode) / 2 + len(global_state.environment.code_extension):
+                if hasattr(global_state.environment, "code_extension") and concrete_code_offset + i + 1 <= len(bytecode) / 2 + len(global_state.environment.code_extension):
                     global_state.mstate.memory[concrete_memory_offset + i] = global_state.environment.code_extension[concrete_code_offset + i - int(len(bytecode) / 2)]
                 else:
                     global_state.mstate.memory[concrete_memory_offset + i] = \
@@ -941,10 +942,45 @@ class Instruction:
     def create_(self, global_state):
         # TODO: implement me
         state = global_state.mstate
-        state.stack.pop(), state.stack.pop(), state.stack.pop()
+        v, s, l = state.stack.pop(), state.stack.pop(), state.stack.pop()
+
+
+        try:
+            s = util.get_concrete_int(s)
+            l = util.get_concrete_int(l)
+        except AttributeError:
+            logging.debug("Can't MLOAD from symbolic index")
+            global_state.mstate.stack.append(1) # To go on with execution
+            return [global_state]
+        data = ""
+        predefined_map = {}
+        i = 0
+        while i < l:
+            try:
+                hex_str = hex(state.memory[s+i]).replace("0x", "")
+                data += hex_str if len(hex_str) == 2 else "0" + hex_str
+
+            except TypeError:
+                predefined_map[i] = state.memory[s+i]
+                i += 31
+            i += 1
+
+        extension_byte_size = len(predefined_map.keys())*32
+
+        raise CreateNewContractSignal(data, predefined_map, extension_byte_size, global_state, v)
+
+        #print(predefined_map)
+        #print(data)
+        #print(len(data) / 2)
+
+        #def post_create_closure(outer_state, inner_state):
+        #    outer_state.mstate.stack.append(0) # Todo address
+        #    return outer_state
+        #creation_state.on_return_execute = post_create_closure(outer_state=global_state, inner_state=creation_state)
+
         # Not supported
-        state.stack.append(0)
-        return [global_state]
+        #state.stack.append(1)
+        #return [global_state]
 
     @instruction
     def return_(self, global_state):

@@ -8,7 +8,7 @@ from .codeparser import find_matching_closed_bracket
 
 def find_contract_idx_range(contract):
     containing_file = get_containing_file(contract)
-    contract_idx = next(finditer(r'contract\s*' + escape(contract.name) + r'(\s.*?){', containing_file.data, flags=DOTALL), None)
+    contract_idx = next(finditer(r'contract\s+' + escape(contract.name) + r'({|\s+.*?{)', containing_file.data, flags=DOTALL), None)
 
     start_head = contract_idx.start()
     end_head = contract_idx.end() - 1
@@ -19,7 +19,7 @@ def get_containing_file(contract):
     contract_name = contract.name
     containing_file = None
     for sol_file in contract.solidity_files:
-        contract_idx = next(finditer(r'contract\s*' + escape(contract_name) + r'(\s.*?){', sol_file.data, flags=DOTALL), None)
+        contract_idx = next(finditer(r'contract\s+' + escape(contract_name) + r'({|\s+.*?{)', sol_file.data, flags=DOTALL), None)
         if contract_idx:
             containing_file = sol_file
             break
@@ -37,7 +37,7 @@ def get_si_from_state(contract, address, state):
 
     index = helper.get_instruction_index(instruction_list, address)
 
-    if index >= len(mappings):
+    if not index or index >= len(mappings):
         return None
 
     solidity_file = contract.solidity_files[mappings[index].solidity_file_idx]

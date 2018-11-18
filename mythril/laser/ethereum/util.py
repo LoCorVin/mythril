@@ -52,9 +52,7 @@ def get_trace_line(instr, state):
 def pop_bitvec(state):
     # pop one element from stack, converting boolean expressions and
     # concrete Python variables to BitVecVal
-
     item = state.stack.pop()
-
     if type(item) == BoolRef:
         return If(item, BitVecVal(1, 256), BitVecVal(0, 256))
     elif type(item) == bool:
