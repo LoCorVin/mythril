@@ -199,17 +199,16 @@ class LaserEVM:
             code_extension = SymbolicCodeExtension("calldata", "Subcontract", c.extension_byte_size, c.predefined_map)
             created_account = execute_contract_creation(laser_evm, c.bytecode, contract_name="Subcontract",
                         code_extension=code_extension, callvalue=c.callvalue)
+
+            if laser_evm.open_states:
+                created_account = laser_evm.open_states[0].accounts[created_account.address]
+
             paused_state = c.paused_state
             paused_state.accounts[created_account.address] = created_account
 
-            # Cpmputing address from hex str returned to z3 BitVec representation
+            # Computing address from hex str returned to z3 BitVec representation
             address_as_int = 0
             new_address = created_account.address.replace("0x", "")
-            #i = len(new_address)
-            #while i > 0:
-            #    address_as_int *= 256
-            #    address_as_int += int(new_address[i-2:i], 16)
-            #    i -= 2
             i = 0
             while i < len(new_address):
                 address_as_int *= 256
@@ -329,6 +328,8 @@ class LaserEVM:
                     new_node.flags |= NodeFlags.FUNC_ENTRY
             except IndexError:
                 new_node.flags |= NodeFlags.FUNC_ENTRY
+        if not state.environment.code:
+            print()
         address = state.environment.code.instruction_list[state.mstate.pc - 1]['address']
         
         environment = state.environment

@@ -132,8 +132,12 @@ class AnnotationProcessor(PrePostProcessor):
         if isinstance(global_state.current_transaction, ContractCreationTransaction):
             message_type = "C"
             mappings = self.contract.creation_mappings
-        instruction = self.get_context_instructions(global_state)[
-                                           instr_index(self.get_context_instructions(global_state), instr)]
+        context_instructions = self.get_context_instructions(global_state)
+        context_istr_idx = instr_index(context_instructions, instr)
+        if context_istr_idx is None:
+            printd(message_type + " " + str( instr) + " stack: " + str(global_state.mstate.stack).replace("\n", ""))
+            return global_state # In delgate functions, no beginning of rewriting instruction blocks exist
+        instruction = context_instructions[context_istr_idx]
         # printd(message_type + " " + str( instruction)+ " m: " + str(get_sourcecode_and_mapping(instruction['address'], istr_list, mappings)))
 
         printd(message_type + " " + str( instruction) + " stack: " + str(global_state.mstate.stack).replace("\n", ""))

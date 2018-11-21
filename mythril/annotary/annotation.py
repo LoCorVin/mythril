@@ -5,7 +5,7 @@ from .transactiontrace import TransactionTrace
 from .codeparser import find_matching_closed_bracket, get_pos_line_col, get_transaction_functions, find_first_uncommented_str
 from .coderewriter import expand_rew, after_implicit_block, get_exp_block_brack_pos, get_editor_indexed_rewriting
 from mythril.laser.ethereum.transaction.transaction_models import ContractCreationTransaction
-from .z3utility import get_function_from_constraints, extract_possible_hashes
+from .z3utility import get_function_from_constraints, extract_possible_hashes, are_z3_satisfiable
 from .sn_utils import get_si_from_state, get_containing_file, find_contract_idx_range, get_signature, hash_for_function_signature
 from copy import deepcopy
 from .debugc import printd
@@ -723,8 +723,8 @@ class SetRestrictionAnnotation(Annotation):
                     # Skipp if function is somehow mentioned in the restricted list
                     if function and (function.name in self.restricted_f or function.signature in res_signatures) or in_constructor and ("constructor" in self.restricted_f
                         or self.contract.name in self.restricted_f or any([restriction.startswith(self.contract.name + "(") for restriction in self.restricted_f]))\
-                        or state_in_delegate and [hash for hash in extract_possible_hashes(state, self.annotation_contract.name) if hash in delegate_hashes] or \
-                        state.environment.active_function_name in delegate_res_signatures:
+                        or state_in_delegate and [hash for hash in extract_possible_hashes(state, self.annotation_contract.name) if hash in delegate_hashes] \
+                        or state.environment.active_function_name in delegate_res_signatures:
                         continue
 
                     for member_name, storage_slots in self.storage_slot_map.items():
@@ -738,12 +738,18 @@ class SetRestrictionAnnotation(Annotation):
                                 src_info, mapping = si_and_mapping
                                 printd("Contract may write to forbidden slot: " + str(src_info.lineno) + ":: " + src_info.code)
                                 new_state = matching_state
-                                if constraints and len(constraints) > 0:
+                                if constraints and len(constraints) > 0 or matching_state != state:
                                     new_state = deepcopy(matching_state) # update with the assumtion taken by the may_write
+
+                                    new_state.mstate.constraints = state.mstate.constraints
+                                    new_state.environment.active_account.storage = state.environment.active_account.storage
+
                                     new_state.mstate.constraints.extend(constraints)
                                 self.add_violations([new_state], mapping, self.contract, member_name,
                                     vio_description="This statement may write to the member variable '" + storage_slot.member.name
                                                     + "' of type '" + storage_slot.member.type+"' although not allowed by the annotation: " + str(self.annotation_str), rew_based=False)
+                                #if are_z3_satisfiable(state.mstate.constraints):
+                                #    printd("")
 
 
     def trans_violations_check(self, sym_tran, sym_con): # Or should i get the predfiltered transaction or even builded chains here
