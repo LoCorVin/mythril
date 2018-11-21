@@ -98,15 +98,18 @@ class ConcretSlot(StorageSlot):
 
         # If not, the slot is still written in its entirety but the observed chunk is loaded and overwritten by itself
 
-        chunk_writing = Extract(self.bit_counter + self.bitlength, self.bit_counter, z3_value)
+        chunk_writing = Extract(self.bit_counter + self.bitlength - 1, self.bit_counter, z3_value)
 
-        chunk_content = Extract(self.bit_counter + self.bitlength, self.bit_counter,
+        chunk_content = Extract(self.bit_counter + self.bitlength - 1, self.bit_counter,
                                 get_storage_slot(BitVecVal(self.slot_counter, 256), storage))
 
         # if the current content of the observed chunk and the respective chunk of the written value can be different
         # like by a different variable assignment, then we found it
         if are_z3_satisfiable(constraint_list + [Not(chunk_content == chunk_writing)]):
-            add_constraints.append(simplify(Not(chunk_content == chunk_writing)))
+            # It is actually not important to use the constraint that the values are different, overwriting with the same
+            # value is still writing. On the other hand it avoids references to storage that later have to be solved with
+            # intertransactional analysis although the violation can be triggered in one transaction
+            # add_constraints.append(simplify(Not(chunk_content == chunk_writing)))
             return True, add_constraints
 
         # For the 256-bit chunks the last step should not be necessary, but a compiler could generate some code that
@@ -205,10 +208,6 @@ def extract_storage_map(contract, struct_map):
     for var_def in var_defs:
         storage_members.append(SolidityMember(var_def))
     contract.storage_members = storage_members
-
-    # Todo attention there is a field 'stateVariable' this might me false for some case, also look for "storageLocation"
-    # Todo Maybe these have to be filtered out
-
     storage_map = {}
     slot_counter = 0
     bit_counter = 0

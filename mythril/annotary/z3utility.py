@@ -120,3 +120,40 @@ def get_function_from_constraints(contract, constraints, is_constructor=False):
                 default_func = func
     return default_func
 
+def get_function_from_constraints(contract, constraints, is_constructor=False):
+    default_func = None
+    for func in contract.functions:
+        if func.isConstructor and is_constructor:
+            return func
+        for constraint in constraints:
+            if len(func.hash) > 0:
+                function_constraint = Extract(255, 224,
+                                              BitVec('calldata_' + contract.name + "[0]", 256)) == int(func.hash,
+                                                                                                       16)
+                if eq(simplify(function_constraint), constraint):
+                    return func
+        if not func.isConstructor:
+            if func.signature == "()":
+                default_func = func
+    return default_func
+
+
+def extract_possible_hashes(state, contract_name):
+    hashes = []
+    for constraint in state.mstate.constraints:
+        simp_constraint = simplify(constraint)
+        str_constraint = str(simp_constraint).replace(" ", "")
+        str_constraint = str_constraint.replace("\n", "")
+        start = "Extract(255,224,calldata_" + contract_name + "[0])=="
+        end = ""
+        if str_constraint.startswith(start) and str_constraint.endswith(end):
+            try:
+                hash_as_int = int(str_constraint[len(start):-len(end)])
+                hash = hex(hash_as_int).replace("0x", "")
+                hash = "0"*(8-len(hash)) + hash
+                hashes.append(hash)
+            except ValueError:
+                continue
+
+    return hashes
+

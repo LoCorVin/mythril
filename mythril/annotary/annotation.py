@@ -5,8 +5,8 @@ from .transactiontrace import TransactionTrace
 from .codeparser import find_matching_closed_bracket, get_pos_line_col, get_transaction_functions, find_first_uncommented_str
 from .coderewriter import expand_rew, after_implicit_block, get_exp_block_brack_pos, get_editor_indexed_rewriting
 from mythril.laser.ethereum.transaction.transaction_models import ContractCreationTransaction
-from .z3utility import get_function_from_constraints
-from .sn_utils import get_si_from_state, get_containing_file, find_contract_idx_range
+from .z3utility import get_function_from_constraints, extract_possible_hashes
+from .sn_utils import get_si_from_state, get_containing_file, find_contract_idx_range, get_signature, hash_for_function_signature
 from copy import deepcopy
 from .debugc import printd
 
@@ -637,6 +637,8 @@ def specific_code_location_with_mapping(contract, state):
 
 class SetRestrictionAnnotation(Annotation):
 
+    DELEGATE_PREFIX = "delegate."
+
     # Any function name, or signature, 'constructor' or contract name for constructor, empty content or '()' as parameter
 
     def __init__(self, contract, annotation_str, content, member_variables, loc, origin_loc):
@@ -676,6 +678,7 @@ class SetRestrictionAnnotation(Annotation):
 
     def build_violations(self, sym_myth):
         violations = []
+
         for _, node in sym_myth.nodes.items():
             for state in node.states:
                 if state.instruction['opcode'] == "SSTORE":
@@ -685,7 +688,9 @@ class SetRestrictionAnnotation(Annotation):
                     matching_state = state
                     si_and_mapping = get_si_from_state(self.annotation_contract, matching_state.instruction['address'],
                                                        matching_state)
+                    state_in_delegate = False
                     if not si_and_mapping: # If no mapping was found we are analyzing bytecode -> backtrack until we find the caller of said bytecode
+                        state_in_delegate = True
                         matching_state = get_matching_state(self.annotation_contract,
                                                             specific_code_location_with_mapping,
                                                             self.annotation_contract, state)
@@ -706,9 +711,20 @@ class SetRestrictionAnnotation(Annotation):
                                 raise SyntaxError("Targeted unexisting fallback function")
                             is_fallback = True # Todo Don't forget to add fallback
 
+                    delegate_res_signatures = [get_signature(rest_fun[len(SetRestrictionAnnotation.DELEGATE_PREFIX):])
+                        for rest_fun in self.restricted_f if rest_fun.startswith(SetRestrictionAnnotation.DELEGATE_PREFIX)]
+
+                    res_signatures = [get_signature(rest_fun) for rest_fun in self.restricted_f
+                                      if not rest_fun.startswith(SetRestrictionAnnotation.DELEGATE_PREFIX)]
+
+                    delegate_hashes = [hash_for_function_signature(sig) for sig in delegate_res_signatures]
+
+
                     # Skipp if function is somehow mentioned in the restricted list
-                    if function and (function.name in self.restricted_f or function.signature in self.restricted_f) or in_constructor and ("constructor" in self.restricted_f
-                        or self.contract.name in self.restricted_f or any([restriction.startswith(self.contract.name + "(") for restriction in self.restricted_f])):
+                    if function and (function.name in self.restricted_f or function.signature in res_signatures) or in_constructor and ("constructor" in self.restricted_f
+                        or self.contract.name in self.restricted_f or any([restriction.startswith(self.contract.name + "(") for restriction in self.restricted_f]))\
+                        or state_in_delegate and [hash for hash in extract_possible_hashes(state, self.annotation_contract.name) if hash in delegate_hashes] or \
+                        state.environment.active_function_name in delegate_res_signatures:
                         continue
 
                     for member_name, storage_slots in self.storage_slot_map.items():

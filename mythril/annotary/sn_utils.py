@@ -5,6 +5,42 @@ from z3 import eq, Extract, BitVec
 from re import finditer, escape, DOTALL
 from .codeparser import find_matching_closed_bracket
 
+from ethereum import utils
+
+abi_type_map = {"uint":"uint256", "int":"int256", "fixed": "fixed128x18", "ufixed": "ufixed128x18"}
+
+
+def get_signature(function_name_str):
+    signature = function_name_str.strip()
+    if not signature.startswith("(") and signature.endswith(")") and "(" in signature and signature.count("(") == 1 \
+        and signature.count(")") == 1:
+        name = signature[:signature.index("(")].strip()
+        content = signature[signature.index("(")+1:signature.index(")")].strip()
+        if len(content) > 0:
+            param_types = []
+            params = content.split(",")
+            for param in params:
+                param = param.strip()
+                if " " in param:
+                    if param.startswith("struct "):
+                        param_pre = "struct "
+                        param_post = param[:len("struct ")]
+                        if " " in param_post:
+                            param_post = param_post[:param_post.index(" ")]
+                        param = param_pre + param_post
+                    else:
+                        param = param[:param.index(" ")]
+                if param in abi_type_map:
+                    param_types.append(abi_type_map[param])
+                else:
+                    param_types.append(param)
+
+            content = ",".join(param_types)
+        return name + "(" + content + ")"
+    return None
+
+def hash_for_function_signature(sig):
+    return "0x%s" % utils.sha3(sig)[:4].hex()
 
 def find_contract_idx_range(contract):
     containing_file = get_containing_file(contract)
@@ -24,6 +60,9 @@ def get_containing_file(contract):
             containing_file = sol_file
             break
     return containing_file
+
+def hash_for_function_signature(sig):
+    return "0x%s" % utils.sha3(sig)[:4].hex()
 
 def get_si_from_state(contract, address, state):
 

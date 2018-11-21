@@ -156,7 +156,7 @@ class BackwardChainStrategy(ChainStrategy):
                             violation.status = Status.VDEPTH
                             violation.trace = vts[0] # Take the first of the remaining traces
                             # annotation.status = Status.VDEPTH
-                    except ViolationFinishedException as v:
+                    except ViolationFinishedException as v: # Todo Maybe here we set the annotation status and finish
                         pass
             except AnnotationFinishedException as a:
                 pass

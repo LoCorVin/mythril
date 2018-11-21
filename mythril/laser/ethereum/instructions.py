@@ -969,18 +969,6 @@ class Instruction:
 
         raise CreateNewContractSignal(data, predefined_map, extension_byte_size, global_state, v)
 
-        #print(predefined_map)
-        #print(data)
-        #print(len(data) / 2)
-
-        #def post_create_closure(outer_state, inner_state):
-        #    outer_state.mstate.stack.append(0) # Todo address
-        #    return outer_state
-        #creation_state.on_return_execute = post_create_closure(outer_state=global_state, inner_state=creation_state)
-
-        # Not supported
-        #state.stack.append(1)
-        #return [global_state]
 
     @instruction
     def return_(self, global_state):
