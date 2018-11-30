@@ -1117,6 +1117,13 @@ class Instruction:
                 "Could not determine required parameters for call, putting fresh symbol on the stack. \n{}".format(e)
             )
             global_state.mstate.stack.append(BitVec("retval_" + str(instr['address']), 256))
+            # CHange to new empty symbolic storage and change the naming of variables
+            #delegate = 0
+            # todo addition by mythril, delegation can arbitrarely change storage,
+            # todo not as trivial, storage vars in constraints must be changed, but how without affecting mythril execution?
+            #if global_state.environment.active_account.storage.delegate:
+            #    delegate = global_state.environment.active_account.storage.delegate + 1
+            global_state.environment.active_account.storage = Storage()
             return [global_state]
 
         transaction = MessageCallTransaction(global_state.world_state,
@@ -1186,6 +1193,15 @@ class Instruction:
                 "Could not determine required parameters for call, putting fresh symbol on the stack. \n{}".format(e)
             )
             global_state.mstate.stack.append(BitVec("retval_" + str(instr['address']), 256))
+
+            # CHange to new empty symbolic storage and change the naming of variables
+            #delegate = 0
+            # todo addition by mythril, delegation can arbitrarely change storage,
+            # todo not as trivial, storage vars in constraints must be changed, but how without affecting mythril execution?
+            #if global_state.environment.active_account.storage.delegate:
+            #    delegate = global_state.environment.active_account.storage.delegate + 1
+            global_state.environment.active_account.storage = Storage()
+
             return [global_state]
 
         transaction = MessageCallTransaction(global_state.world_state,

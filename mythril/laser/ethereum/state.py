@@ -35,7 +35,9 @@ class Storage:
                     pass
         if self.concrete:
             return 0
-        self._storage[item] = BitVec("storage[" + str(item) + "]", 256)
+        storage_str = "storage[" + str(item) + "]"
+
+        self._storage[item] = BitVec(storage_str, 256)
         return self._storage[item]
 
     def __setitem__(self, key, value):
