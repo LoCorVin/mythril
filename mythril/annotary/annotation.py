@@ -483,7 +483,9 @@ class Annotation:
     def add_violations(self, violations, contract, additional=None, length=None, vio_description="", rew_based=True, set_anchor_state=None): # Ads new violations to this annotation and sets the status, can be called multiple times
         for vio in violations:
             anchor_state, violating_state, persistant_states = get_violation_states(contract, vio)
-            self.violations.extend([Violation(anchor_state if not set_anchor_state else set_anchor_state,violating_state, per_state, contract, additional, length, vio_description, rew_based) for per_state in persistant_states])
+            self.violations.extend([Violation(anchor_state if not set_anchor_state else set_anchor_state,violating_state,
+                per_state, contract, additional, length, vio_description, rew_based) for per_state in persistant_states
+                                    if are_z3_satisfiable(per_state.mstate.constraints)])
         self.status = Status.HSINGLE if self.violations else Status.HOLDS
 
     def get_creation_ignore_list(self):
