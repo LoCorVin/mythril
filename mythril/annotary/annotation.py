@@ -310,6 +310,8 @@ class Violation:
 
     def get_dictionary(self, annotation_contract, filename_map):
         origin_file_code = annotation_contract.origin_file_code
+        if not self.trace:
+            pass
 
         trace_f = self.trace.functions[-1] # Get the function where the violation started
         # Search for the function where the tranasaction ends, skipping delegation dummies
@@ -475,13 +477,13 @@ class Annotation:
         adict = {"title": self.title, "level": get_status_string(self.status), "lvl_description": self.get_lvl_description(),
                  "ano_description": self.get_annotation_description(), "pos": self.origin[0], "line": self.origin[1], "col": self.origin[2],
                  "ano_string": self.annotation_str, "length": len(self.annotation_str),
-                 "violations": [violation.get_dictionary(self.annotation_contract, filename_map) for violation in self.violations]}
+                 "violations": [violation.get_dictionary(self.annotation_contract, filename_map) for violation in self.violations if violation.status in [Status.VSINGLE, Status.VCHAIN, Status.VDEPTH]]}
         return adict
 
-    def add_violations(self, violations, contract, additional=None, length=None, vio_description="", rew_based=True): # Ads new violations to this annotation and sets the status, can be called multiple times
+    def add_violations(self, violations, contract, additional=None, length=None, vio_description="", rew_based=True, set_anchor_state=None): # Ads new violations to this annotation and sets the status, can be called multiple times
         for vio in violations:
             anchor_state, violating_state, persistant_states = get_violation_states(contract, vio)
-            self.violations.extend([Violation(anchor_state,violating_state, per_state, contract, additional, length, vio_description, rew_based) for per_state in persistant_states])
+            self.violations.extend([Violation(anchor_state if not set_anchor_state else set_anchor_state,violating_state, per_state, contract, additional, length, vio_description, rew_based) for per_state in persistant_states])
         self.status = Status.HSINGLE if self.violations else Status.HOLDS
 
     def get_creation_ignore_list(self):
@@ -508,7 +510,7 @@ class Annotation:
         elif lvl == Status.HOLDS:
             return "The other transactions in the contract prevent a violation from being exploitable. Changing the code of a transaction might create a violation in an other transaction."
         elif lvl == Status.VDEPTH:
-            return "There are violations to this annotation, but a combination of multiple transactions might allow to trigger them. Exploring these chains was not possible due to the depth restriction to the analysis. So the violation may not be exploitable."
+            return "There are no confirmed violations to this annotation, but a combination of multiple transactions might allow to trigger one. Exploring these chains was not possible due to the depth restriction to the analysis. So the violation may not be exploitable."
         elif lvl == Status.VCHAIN:
             return "At least one violation has been found were the combination of multiple transactions can lead to a violation of the annotation. However at least two or more transactions are necessary."
         elif lvl == Status.VSINGLE:
@@ -684,7 +686,14 @@ def specific_code_location_with_mapping(contract, state):
     if not si_and_mapping:
         return False
     si, mapping = si_and_mapping
-    return not si.code.startswith("function ") and not si.code.startswith("contract ")
+    return not si.code.startswith("function ") and not si.code.startswith("contract ") # and state.instruction["opcode"] in ['DELEGATECALL', 'CALLCODE']
+
+def mapping_and_call_return(contract, state):
+    si_and_mapping = get_si_from_state(contract, state.instruction['address'], state)
+    if not si_and_mapping:
+        return False
+    si, mapping = si_and_mapping
+    return not si.code.startswith("function ") and not si.code.startswith("contract ") and state.instruction["opcode"] in ['DELEGATECALL', 'CALLCODE', "STATICCALL", "CALL"]
 
 
 
@@ -743,9 +752,10 @@ class SetRestrictionAnnotation(Annotation):
                                                        anchor_state)
 
                     if not si_and_mapping: # If no mapping was found we are analyzing bytecode -> backtrack until we find the caller of said bytecode
-                        anchor_state = get_anchor_state(self.annotation_contract, state)
+                        anchor_state = get_matching_state(self.annotation_contract.states, mapping_and_call_return, self.annotation_contract, state, False)
                         if not anchor_state:
                             continue  # When violation of same structor happens in different contract and thus not violating this annotated member var
+                        anchor_state = anchor_state[0]
 
                     if anchor_state != state:
                         state_in_delegate = True
@@ -794,7 +804,7 @@ class SetRestrictionAnnotation(Annotation):
                                     new_state.mstate.constraints.extend(constraints)
                                 self.add_violations([new_state], self.annotation_contract, member_name,
                                     vio_description="This statement may write to the member variable '" + storage_slot.member.name
-                                                    + "' of type '" + storage_slot.member.type+"' although not allowed by the annotation: " + str(self.annotation_str), rew_based=False)
+                                                    + "' of type '" + storage_slot.member.type+"' although not allowed by the annotation: " + str(self.annotation_str), rew_based=False, set_anchor_state=anchor_state)
 
 
     def trans_violations_check(self, sym_tran, sym_con): # Or should i get the predfiltered transaction or even builded chains here
