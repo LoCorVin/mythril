@@ -421,14 +421,14 @@ class Annotary:
         # Todo Extract violations from only one symbolic execution
         for ign_idx in range(len(trans_ignore_list)):
             annotation = trans_ignore_list[ign_idx][4]
-            mapping = get_sourcecode_and_mapping(trans_ignore_list[ign_idx][2]['address'], contract.disassembly.instruction_list, contract.mappings)
-            annotation.add_violations(annotationsProcessor.trans_violations[ign_idx], mapping, contract, length=0,
+            #mapping = get_sourcecode_and_mapping(trans_ignore_list[ign_idx][2]['address'], contract.disassembly.instruction_list, contract.mappings)
+            annotation.add_violations(annotationsProcessor.trans_violations[ign_idx], contract, length=0,
                     vio_description="An assert with the annotations condition would fail here.")
 
         for ign_idx in range(len(create_ignore_list)):
             annotation = create_ignore_list[ign_idx][4]
-            mapping = get_sourcecode_and_mapping(create_ignore_list[ign_idx][2]['address'], contract.creation_disassembly.instruction_list, contract.creation_mappings)
-            annotation.add_violations(annotationsProcessor.create_violations[ign_idx], mapping, contract, length=0,
+            #mapping = get_sourcecode_and_mapping(create_ignore_list[ign_idx][2]['address'], contract.creation_disassembly.instruction_list, contract.creation_mappings)
+            annotation.add_violations(annotationsProcessor.create_violations[ign_idx], contract, length=0,
                                       vio_description="An assert with the annotations condition would fail here.")
 
         for annotation in self.annotation_map[contract.name]:

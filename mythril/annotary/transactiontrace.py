@@ -35,7 +35,7 @@ class TransactionTrace:
         # self.storage = {k: simplify(v) for k,v in storage }
         constraints = state.mstate.constraints
         storage = state.environment.active_account.storage
-        self.constraints = simplify_constraints_individually(constraints)
+        self.constraints = simplify_constraints_individually(constraints) # Todo not necessary in the case of violations
         if contract:
             self.functions = [get_function_from_constraints(contract, state.mstate.constraints, isinstance(state.current_transaction, ContractCreationTransaction))]
 
@@ -69,19 +69,6 @@ class TransactionTrace:
             else:
                 setattr(result, k, deepcopy(v, memo))
         return result
-
-    #def __deepcopy__(self, memodict={}):
-    #    newone = type(self)()
-    #    newone.__dict__.update(self.__dict__)
-    #    newone.constraints = deepcopy(self.constraints)
-    #    newone.functions = deepcopy(self.functions)
-    #    newone.state = self.state
-    #    newone.storage = deepcopy(self.storage)
-    #    newone.tran_constraints = deepcopy(self.tran_constraints)
-    #    newone.lvl = deepcopy(self.lvl)
-    #    newone.sym_names = deepcopy(self.sym_names)
-    #
-    #   return newone
 
 
     """   

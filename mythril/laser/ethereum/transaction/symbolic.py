@@ -6,27 +6,48 @@ from mythril.laser.ethereum.state import Storage
 from mythril.laser.ethereum.cfg import Node, Edge, JumpType
 from copy import deepcopy
 
+class FoundDistinctGlobalWorldState(Exception):
+    pass
 
 def execute_message_call(laser_evm, callee_address):
     """ Executes a message call transaction from all open states """
     open_states = laser_evm.open_states[:]
     del laser_evm.open_states[:]
 
-    open_world_state = open_states[0]
-    open_world_state.accounts = deepcopy(open_world_state.accounts)
-    open_world_state[callee_address].storage = Storage()
+    for open_world_state in open_states:
+        try:
+            open_world_state = open_states[0]
+            open_world_state.accounts = deepcopy(open_world_state.accounts)
+            for address, account in open_world_state.accounts.items():
+                account.storage = Storage()
+                account.balance = BitVec("balance", 256)
+            if not laser_evm.open_states:
+                laser_evm.open_states.append(open_world_state)
+            else:
+                for address, account in open_world_state.accounts.items():
+                    for added_world_state in laser_evm.open_states:
+                        if address not in added_world_state.accounts:
+                            for address_existing, account_existing in added_world_state.accounts.items():
+                                if account.code != account_existing.code:
+                                    raise FoundDistinctGlobalWorldState()
+        except FoundDistinctGlobalWorldState as f:
+            laser_evm.open_states.append(open_world_state)
 
-    transaction = MessageCallTransaction(
-        open_world_state,
-        open_world_state[callee_address],
-        BitVec("caller", 256),
-        [],
-        BitVec("gasprice", 256),
-        BitVec("callvalue", 256),
-        BitVec("origin", 256),
-        CalldataType.SYMBOLIC,
-    )
-    _setup_global_state_for_execution(laser_evm, transaction)
+    open_states = laser_evm.open_states[:]
+    del laser_evm.open_states[:]
+
+    for open_world_state in open_states:
+        transaction = MessageCallTransaction(
+            open_world_state,
+            open_world_state[callee_address],
+            BitVec("caller", 256),
+            [],
+            BitVec("gasprice", 256),
+            BitVec("callvalue", 256),
+            BitVec("origin", 256),
+            CalldataType.SYMBOLIC,
+        )
+        _setup_global_state_for_execution(laser_evm, transaction)
 
     laser_evm.exec()
 
