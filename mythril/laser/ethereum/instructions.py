@@ -16,6 +16,7 @@ from mythril.laser.ethereum.state import GlobalState, MachineState, Environment,
 import mythril.laser.ethereum.natives as natives
 from mythril.laser.ethereum.transaction import MessageCallTransaction, TransactionEndSignal, TransactionStartSignal, \
     ContractCreationTransaction, CreateNewContractSignal
+from mythril.laser.ethereum.state import Storage
 
 keccac_map = {}
 
@@ -1049,6 +1050,9 @@ class Instruction:
             # TODO: maybe use BitVec here constrained to 1
             return [global_state]
 
+        # Todo Annotary CHanged this: storage is set to symbolic
+        callee_account.storage = Storage()
+
         transaction = MessageCallTransaction(global_state.world_state,
                                              callee_account,
                                              BitVecVal(int(environment.active_account.address, 16), 256),
@@ -1245,5 +1249,6 @@ class Instruction:
     def staticcall_(self, global_state):
         # TODO: implement me
         instr = global_state.get_current_instruction()
+        # Todo implement for annotary
         global_state.mstate.stack.append(BitVec("retval_" + str(instr['address']), 256))
         return [global_state]
