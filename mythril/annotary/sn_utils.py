@@ -4,10 +4,11 @@ from mythril.ether.soliditycontract import SourceCodeInfo
 from z3 import eq, Extract, BitVec
 from re import finditer, escape, DOTALL
 from .codeparser import find_matching_closed_bracket
+from collections import deque
 
 from ethereum import utils
 
-abi_type_map = {"uint":"uint256", "int":"int256", "fixed": "fixed128x18", "ufixed": "ufixed128x18"}
+abi_type_map = {"uint": "uint256", "int": "int256", "fixed": "fixed128x18", "ufixed": "ufixed128x18"}
 
 
 def get_signature(function_name_str):
@@ -63,6 +64,36 @@ def get_containing_file(contract):
 
 def hash_for_function_signature(sig):
     return "0x%s" % utils.sha3(sig)[:4].hex()
+
+def get_matching_state(states, f, param, init_state, ignore_ignore=False, direction="BACKWARD"):
+    search_states = deque([init_state])
+    matching_states = []
+    while search_states:
+        state = search_states.pop()
+        if ignore_ignore and hasattr(state, 'ignore'):
+            continue
+        if f(param, state):
+            matching_states.append(state)
+        else:
+            if direction == "BACKWARD" and hasattr(state, "previous"):
+                search_states.append(states[state.previous])
+
+            elif direction == "FORWARD" and hasattr(state, "next"):
+                search_states.extend([states[idx] for idx in state.next])
+    return matching_states
+
+def get_matching_state_multisearch(states, search_spec, init_state):
+    search_states = deque([init_state])
+    matching_states = []
+    for s_f, s_params, s_ignore_ignore, s_direction in search_spec:
+        while search_states:
+            state = search_states.pop()
+            sub_matching_states = get_matching_state(states, s_f, s_params, state, s_ignore_ignore, s_direction)
+            matching_states.extend(sub_matching_states)
+        search_states = matching_states
+        matching_states = []
+    return search_states
+
 
 def get_si_from_state(contract, address, state):
 

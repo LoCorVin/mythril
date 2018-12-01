@@ -6,11 +6,11 @@ from .codeparser import find_matching_closed_bracket, get_pos_line_col, get_tran
 from .coderewriter import expand_rew, after_implicit_block, get_exp_block_brack_pos, get_editor_indexed_rewriting
 from mythril.laser.ethereum.transaction.transaction_models import ContractCreationTransaction
 from .z3utility import get_function_from_constraints, extract_possible_hashes, are_z3_satisfiable
-from .sn_utils import get_si_from_state, get_containing_file, find_contract_idx_range, get_signature, hash_for_function_signature
+from .sn_utils import get_si_from_state, get_containing_file, find_contract_idx_range, get_signature, hash_for_function_signature, get_matching_state, get_matching_state_multisearch
 from copy import deepcopy
 from .debugc import printd
 from collections import deque
-from z3 import simplify, is_true
+from z3 import simplify, is_true, eq
 
 
 
@@ -143,34 +143,7 @@ def init_annotation(contract, code, head, kw, start, end, origin, config):
     elif kw == "ethersource":
         pass
 
-def get_matching_state(states, f, param, init_state, ignore_ignore=False, direction="BACKWARD"):
-    search_states = deque([init_state])
-    matching_states = []
-    while search_states:
-        state = search_states.pop()
-        if ignore_ignore and hasattr(state, 'ignore'):
-            break
-        if f(param, state):
-            matching_states.append(state)
-        else:
-            if direction == "BACKWARD" and hasattr(state, "previous"):
-                search_states.append(states[state.previous])
 
-            elif direction == "FORWARD" and hasattr(state, "next"):
-                search_states.extend([states[idx] for idx in state.next])
-    return matching_states
-
-def get_matching_state_multisearch(states, search_spec, init_state):
-    search_states = deque([init_state])
-    matching_states = []
-    for s_f, s_params, s_ignore_ignore, s_direction in search_spec:
-        while search_states:
-            state = search_states.pop()
-            sub_matching_states = get_matching_state(states, s_f, s_params, state, s_ignore_ignore, s_direction)
-            matching_states.extend(sub_matching_states)
-        search_states = matching_states
-        matching_states = []
-    return search_states
 
 
 
@@ -255,7 +228,7 @@ def merge_constraints(consts1, consts2):
         same=False
         constraint = simplify(constraint)
         for c in m_consts:
-            if is_true(c == constraint):
+            if eq(c, constraint) or is_true(simplify(c == constraint)):
                 same = True
                 break
         if not same:
@@ -264,7 +237,7 @@ def merge_constraints(consts1, consts2):
 
 def get_violation_states(contract, state):
     anchor_state = get_anchor_state(contract, state)
-    persistant_states = get_persistant_state(contract, state)
+    persistant_states = [deepcopy(per_state) for per_state in get_persistant_state(contract, state)]
     for per_state in persistant_states:
         per_state.mstate.constraints = merge_constraints(per_state.mstate.constraints, state.mstate.constraints)
     return anchor_state, state, persistant_states
@@ -276,6 +249,8 @@ class Violation:
 
         self.anchor_state, self.violating_state, self.persistant_state = anchor_state, violating_state, persistant_state
         self.trace = TransactionTrace(self.persistant_state, contract)
+        self.trace.functions = [get_function_from_constraints(contract, anchor_state.mstate.constraints,
+                                        isinstance(anchor_state.current_transaction, ContractCreationTransaction))]
 
         self.rew_based = rew_based
 
@@ -701,7 +676,7 @@ def mapping_and_call_return(contract, state):
 
 
 def is_not_ignored(_, state):
-    return not hasattr(state, "ignore")
+    return not (hasattr(state, "ignore") or "is" in state.instruction)
 
 
 def is_halting_instruction( _, state):

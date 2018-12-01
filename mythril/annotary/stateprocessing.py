@@ -132,15 +132,16 @@ class AnnotationProcessor(PrePostProcessor):
         if isinstance(global_state.current_transaction, ContractCreationTransaction):
             message_type = "C"
             mappings = self.contract.creation_mappings
+
         context_instructions = self.get_context_instructions(global_state)
         context_istr_idx = instr_index(context_instructions, instr)
         if context_istr_idx is None:
-            printd(message_type + " " + str( instr) + " stack: " + str(global_state.mstate.stack).replace("\n", ""))
+            printd(message_type + " " + str( instr) + " stack: " + str(global_state.mstate.stack).replace("\n", "")+ " constr: " + str(global_state.mstate.constraints).replace("\n", ""))
             return global_state # In delgate functions, no beginning of rewriting instruction blocks exist
         instruction = context_instructions[context_istr_idx]
         # printd(message_type + " " + str( instruction)+ " m: " + str(get_sourcecode_and_mapping(instruction['address'], istr_list, mappings)))
 
-        printd(message_type + " " + str( instruction) + " stack: " + str(global_state.mstate.stack).replace("\n", ""))
+        printd(message_type + " " + str( instruction) + " stack: " + str(global_state.mstate.stack).replace("\n", "") + " constr: " + str(global_state.mstate.constraints).replace("\n", ""))
 
         #print(message_type +" " + str(self.get_context_instructions(global_state)[instr_index(self.get_context_instructions(global_state), instr)])\
         #+ "     " + str(global_state.environment.active_account.storage._storage).replace("\n", "") + "    "
@@ -208,7 +209,7 @@ class AnnotationProcessor(PrePostProcessor):
             instr = global_state.environment.code.instruction_list[global_state.mstate.pc]
             new_instr = self.get_context_instructions(new_state)[new_state.mstate.pc]
 
-            if self.is_this_or_previouse_ignore_type(new_state, IType.ENTRY):
+            if self.is_this_or_previouse_ignore_type(new_state, IType.ENTRY) and not hasattr(new_state, 'ignore'):
                 printd("Duplicate new")
                 skip_state = new_state # Not using deepcopy here anymore, leeds to missing states in node in statespace
                 new_global_states[state_idx] = None

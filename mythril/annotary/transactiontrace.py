@@ -8,6 +8,7 @@ import re
 from mythril.annotary.z3utility import are_satisfiable, simplify_constraints, simplify_z3_constraints, \
     extract_sym_names, filter_for_t_variable_data
 from mythril.annotary.z3wrapper import Slot, Constraint
+from .sn_utils import get_matching_state, get_matching_state_multisearch
 
 simp_and_sat = False
 
@@ -26,8 +27,17 @@ def deep_bitvec_substitute(obj, subs_map):
 
 # Todo constructor mit den intentet initvalues versorgen
 
+def has_associated_function(c, s):
+    return get_function_from_constraints(c, s.mstate.constraints,
+                isinstance(s.current_transaction, ContractCreationTransaction)) is not None
 
+class FunctionDummy:
 
+    def __init__(self, name, signature, isConstructor, visibility):
+        self.name = name
+        self.signature = signature
+        self.isConstructor = isConstructor
+        self.visibility = visibility
 
 class TransactionTrace:
 
@@ -36,8 +46,17 @@ class TransactionTrace:
         constraints = state.mstate.constraints
         storage = state.environment.active_account.storage
         self.constraints = simplify_constraints_individually(constraints) # Todo not necessary in the case of violations
+        self.functions = []
         if contract:
-            self.functions = [get_function_from_constraints(contract, state.mstate.constraints, isinstance(state.current_transaction, ContractCreationTransaction))]
+            s = get_matching_state(contract.states, has_associated_function, contract,state, False, "BACKWARD")
+            if s:
+                self.functions = [get_function_from_constraints(contract, s[0].mstate.constraints,
+                                                    isinstance(s[0].current_transaction, ContractCreationTransaction))]
+            else:
+                if isinstance(state.current_transaction, ContractCreationTransaction):
+                    self.functions = [FunctionDummy("constructor", "constructor()", True, "public")]
+                else:
+                    self.functions = [FunctionDummy("function", "function()", False, "public")]
 
         # eliminate all constraints that only contain names not in the set of names from storage
         self.constraints = simplify_z3_constraints(self.constraints) # Todo simplification of the sum of constraints
