@@ -61,7 +61,7 @@ class SolidityFunction:
         self.constant = attributes['constant']
         self.implemented = attributes['implemented']
         self.modifiers = attributes['modifiers'] if 'modfiers' in attributes else None
-        self.payable =  attributes['payable']
+        self.payable = attributes['payable']
         self.stateMutability = attributes['stateMutability']
         self.visibility = attributes['visibility']
         self.name = attributes['name']

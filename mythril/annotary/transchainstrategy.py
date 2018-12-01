@@ -64,9 +64,9 @@ class ChainStrategy:
                 if not contains_storage_reference(trace):
                     violation.status = Status.VSINGLE
                     annotation.status = Status.VSINGLE
-            if annotation.status == Status.VSINGLE: # Removing this exploded the runtime
-                annotation.violations = [violation for violation in annotation.violations if violation.status == Status.VSINGLE]
-                self.annotations.remove(annotation) # removing finished annotation from the self.annotations worklist
+            #if annotation.status == Status.VSINGLE: # Removing this exploded the runtime
+            #    annotation.violations = [violation for violation in annotation.violations if violation.status == Status.VSINGLE]
+            #    self.annotations.remove(annotation) # removing finished annotation from the self.annotations worklist
 
         # Faster more efficient combination by using only name mappings
         #const_traces = list(map(lambda trace: (trace.get_ref_storage_names(), trace.get_storage_subs_map()), self.const_traces))
@@ -120,6 +120,8 @@ class BackwardChainStrategy(ChainStrategy):
             try:
                 while violations:
                     violation = violations.popleft()
+                    if violation.status == Status.VSINGLE:
+                        continue
                     vts = deque([violation.trace])
                     try:
                         for i in range(self.config.max_transaction_depth):
@@ -131,22 +133,14 @@ class BackwardChainStrategy(ChainStrategy):
                                 for t in traces:
                                     is_const = False
                                     if refines_constraints(t.storage, v.constraints):
-
                                         vt_new = t.apply_trace(v)
                                         if t in self.const_traces:
-
                                             is_const = True
                                             zeroize_storage_vars(t)
                                         if not contains_storage_reference(vt_new):
                                             if are_z3_satisfiable([constraint.constraint for constraint in vt_new.tran_constraints]):
-                                                if is_const:
-                                                    printd("ConstOriginChain")
-                                                else:
-                                                    printd("IndiChain")
                                                 violation.trace = vt_new
                                                 violation.status = Status.VCHAIN
-                                                # annotation.status = Status.VCHAIN
-                                                # annotation.violations = [violation]
                                                 raise ViolationFinishedException()
                                             else:
                                                 printd("Constraints not Satisfiable")
@@ -155,20 +149,15 @@ class BackwardChainStrategy(ChainStrategy):
                                             if not is_const:
                                                 new_vs.append(vt_new)
                             if not new_vs:
-                                # annotation.violations = []
                                 violation.trace = None
                                 violation.status = Status.HOLDS
-
-                                # annotation.status = Status.HOLDS
-
                                 raise ViolationFinishedException()
                             else:
                                 vts = deque(new_vs)
                         if vts:
                             violation.status = Status.VDEPTH
-                            violation.trace = vts[0] # Take the first of the remaining traces
-                            # annotation.status = Status.VDEPTH
-                    except ViolationFinishedException as v: # Todo Maybe here we set the annotation status and finish
+                            violation.trace = vts[0]
+                    except ViolationFinishedException as v:
                         pass
             except AnnotationFinishedException as a:
                 pass

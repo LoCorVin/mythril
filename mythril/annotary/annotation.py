@@ -568,7 +568,7 @@ class InvariantAnnotation(Annotation):
         assertion_text = "assert(" + self.content + ");"
 
         for function in get_transaction_functions(self.original_contract):
-            if function.constant == True: # Dont' build invariant assertions for functions that do not change storage and thus do not change invariants
+            if function.constant == True or function.visibility not in ["public", "external"]: # Dont' build invariant assertions for functions that do not change storage and thus do not change invariants
                 continue
             for term_pos in function.terminating_pos:
 
@@ -710,8 +710,6 @@ class SetRestrictionAnnotation(Annotation):
         for m_var in member_variables:
             self.storage_slot_map[m_var.declaring_contract + "." + m_var.name] = contract.storage_map[m_var.declaring_contract + "."+ m_var.name]
         self.member_variables = member_variables
-
-        # Todo get all storage slots from storage map
         Annotation.__init__(self, annotation_str)
 
     def rewrite_code(self, file_code, contract_code, contract_range):
@@ -753,7 +751,6 @@ class SetRestrictionAnnotation(Annotation):
 
                     res_signatures = [get_signature(rest_fun) for rest_fun in self.restricted_f
                                       if not rest_fun.startswith(SetRestrictionAnnotation.DELEGATE_PREFIX)]
-
                     delegate_hashes = [hash_for_function_signature(sig) for sig in delegate_res_signatures]
 
 
