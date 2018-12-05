@@ -335,6 +335,8 @@ def get_storage_mapping_for_types(contract, struct_map, m_type, slot_counter=0, 
         nested_m_info, slot_counter, bit_counter = get_storage_mapping_for_types(contract, struct_map, struct_types, slot_counter, bit_counter)
         m_info.extend(nested_m_info)
 
+    if m_type.startswith("contract"):
+        m_type = 'address'
     if m_type in type_alias:
         m_type = type_alias[m_type]
 
@@ -374,6 +376,8 @@ def get_storage_mapping_for_types(contract, struct_map, m_type, slot_counter=0, 
             bytes_size = 24
         mappings, slot_counter, bit_counter = get_primitive_storage_mapping(slot_counter, bit_counter, bytes_size * 8)
         m_info.extend(mappings)
+    else:
+        raise SyntaxError("Not treated type")
 
     return m_info, slot_counter, bit_counter
 
