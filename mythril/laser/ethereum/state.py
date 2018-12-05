@@ -95,9 +95,10 @@ class Environment:
         origin,
         code=None,
         calldata_type=CalldataType.SYMBOLIC,
+        can_write=True
     ):
         # Metadata
-
+        self.can_write = can_write
         self.active_account = active_account
         self.active_function_name = ""
 

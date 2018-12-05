@@ -809,6 +809,8 @@ class Instruction:
 
     @instruction
     def sstore_(self, global_state):
+        if hasattr(global_state.environment, "can_write") and not global_state.environment.can_write:
+            return [] # Error is thrown, and no state returned if static call is used
         state = global_state.mstate
         index, value = state.stack.pop(), state.stack.pop()
 
@@ -1060,7 +1062,8 @@ class Instruction:
                                              environment.gasprice,
                                              value,
                                              environment.origin,
-                                             call_data_type)
+                                             call_data_type,
+                                             can_write=global_state.environment.can_write if hasattr(global_state.environment, "can_write") else True)
         raise TransactionStartSignal(transaction, self.op_code)
 
     @instruction
@@ -1134,7 +1137,8 @@ class Instruction:
                                              value,
                                              environment.origin,
                                              call_data_type,
-                                             callee_account.code
+                                             callee_account.code,
+                                             can_write=global_state.environment.can_write if hasattr(global_state.environment, "can_write") else True
                                              )
         raise TransactionStartSignal(transaction, self.op_code)
 
@@ -1212,7 +1216,8 @@ class Instruction:
                                              environment.callvalue,
                                              environment.origin,
                                              call_data_type,
-                                             callee_account.code
+                                             callee_account.code,
+                                             can_write=global_state.environment.can_write if hasattr(global_state.environment, "can_write") else True
                                              )
         raise TransactionStartSignal(transaction, self.op_code)
 
@@ -1263,8 +1268,62 @@ class Instruction:
 
     @instruction
     def staticcall_(self, global_state):
-        # TODO: implement me
         instr = global_state.get_current_instruction()
-        # Todo implement for annotary
+        environment = global_state.environment
+
+        try:
+            callee_address, callee_account, call_data, value, call_data_type, gas, memory_out_offset, memory_out_size = get_call_parameters(
+                global_state, self.dynamic_loader, False) # Only parameter difference to call
+        except ValueError as e:
+            logging.info(
+                "Could not determine required parameters for call, putting fresh symbol on the stack. \n{}".format(e)
+            )
+            # TODO: decide what to do in this case
+            global_state.mstate.stack.append(BitVec("retval_" + str(instr['address']), 256))
+            return [global_state]
         global_state.mstate.stack.append(BitVec("retval_" + str(instr['address']), 256))
-        return [global_state]
+
+        if 0 < int(callee_address, 16) < 5:
+            logging.info("Native contract called: " + callee_address)
+            if call_data == [] and call_data_type == CalldataType.SYMBOLIC:
+                logging.debug("CALL with symbolic data not supported")
+                return [global_state]
+
+            try:
+                mem_out_start = helper.get_concrete_int(memory_out_offset)
+                mem_out_sz = memory_out_size.as_long()
+            except AttributeError:
+                logging.debug("CALL with symbolic start or offset not supported")
+                return [global_state]
+
+            global_state.mstate.mem_extend(mem_out_start, mem_out_sz)
+            call_address_int = int(callee_address, 16)
+            try:
+                data = natives.native_contracts(call_address_int, call_data)
+            except natives.NativeContractException:
+                contract_list = ['ecerecover', 'sha256', 'ripemd160', 'identity']
+                for i in range(mem_out_sz):
+                    global_state.mstate.memory[mem_out_start + i] = BitVec(contract_list[call_address_int - 1] +
+                                                                           "(" + str(call_data) + ")", 256)
+
+                return [global_state]
+
+            for i in range(min(len(data), mem_out_sz)):  # If more data is used then it's chopped off
+                global_state.mstate.memory[mem_out_start + i] = data[i]
+
+            # TODO: maybe use BitVec here constrained to 1
+            return [global_state]
+
+        # Todo Annotary Changed this: storage is set to symbolic
+        callee_account.storage = Storage()
+
+        transaction = MessageCallTransaction(global_state.world_state,
+                                             callee_account,
+                                             BitVecVal(int(environment.active_account.address, 16), 256),
+                                             call_data,
+                                             environment.gasprice,
+                                             value,
+                                             environment.origin,
+                                             call_data_type,
+                                             can_write=False)
+        raise TransactionStartSignal(transaction, self.op_code)

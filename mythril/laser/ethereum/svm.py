@@ -268,7 +268,6 @@ class LaserEVM:
                 #if self.prepostprocessor:
                 #    new_global_states = self.prepostprocessor.postprocess(global_state, new_global_states)
 
-                # Todo Maybee also filter here
                 # In order to get a nice call graph we need to set the nodes here
                 for state in new_global_states:
                     state.node = global_state.node

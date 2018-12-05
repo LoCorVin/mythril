@@ -38,9 +38,11 @@ class MessageCallTransaction:
                  call_value=BitVec("callvalue", 256),
                  origin=BitVec("origin", 256),
                  call_data_type=BitVec("call_data_type", 256),
-                 code=None
+                 code=None,
+                 can_write=True
                  ):
         assert isinstance(world_state, WorldState)
+        self.can_write=can_write
         self.world_state = world_state
         self.callee_account = callee_account
         self.caller = caller
@@ -63,6 +65,7 @@ class MessageCallTransaction:
             self.origin,
             code=self.code or self.callee_account.code,
             calldata_type=self.call_data_type,
+            can_write=self.can_write
         )
 
         global_state = GlobalState(self.world_state, environment, None)
