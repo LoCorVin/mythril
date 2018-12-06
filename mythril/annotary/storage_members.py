@@ -2,14 +2,14 @@ from mythril.annotary.ast_parser import get_all_members_for_contract
 from mythril.annotary.codeparser import find_matching_closed_bracket
 from functools import reduce
 from mythril.annotary.z3utility import are_z3_satisfiable
-from z3 import eq, BitVecVal, BitVec, Extract, Not, simplify
+from z3 import eq, BitVecVal, BitVec, Extract, Not, simplify, is_bv
 from mythril.laser.ethereum.util import get_concrete_int
 from mythril.laser.ethereum.instructions import keccac_map
 from re import finditer
 
 from ethereum import utils
 from mythril.laser.ethereum import util
-from .z3utility import extract_sym_names
+from .z3utility import extract_sym_names, get_bv
 
 type_alias = {"address": "int160", "bool": "int8", "byte": "bytes1", "ufixed": "ufixed128x18", "fixed": "fixed128x18",
               "int": "int256", "uint":"uint256"}
@@ -63,6 +63,9 @@ class ConcretSlot(StorageSlot):
         self.bitlength = bitlength
 
     def may_write_to(self, z3_index, z3_value, storage, constraint_list):
+        z3_index = simplify(get_bv(z3_index))
+        z3_value = simplify(get_bv(z3_value))
+
         same_slot = False
 
         add_constraints = []
@@ -97,11 +100,12 @@ class ConcretSlot(StorageSlot):
             return True, add_constraints
 
         # If not, the slot is still written in its entirety but the observed chunk is loaded and overwritten by itself
+        to_bit, from_bit = self.bit_counter + self.bitlength - 1, self.bit_counter
+        # to_bit, from_bit = BitVecVal(self.bit_counter + self.bitlength - 1, 256), BitVecVal(self.bit_counter, 256)
+        chunk_writing = Extract(to_bit,from_bit, z3_value)
 
-        chunk_writing = Extract(self.bit_counter + self.bitlength - 1, self.bit_counter, z3_value)
-
-        chunk_content = Extract(self.bit_counter + self.bitlength - 1, self.bit_counter,
-                                get_storage_slot(BitVecVal(self.slot_counter, 256), storage))
+        chunk_content = Extract(to_bit,from_bit,
+                                get_bv(get_storage_slot(BitVecVal(self.slot_counter, 256), storage)))
 
         # if the current content of the observed chunk and the respective chunk of the written value can be different
         # like by a different variable assignment, then we found it
@@ -221,7 +225,7 @@ def extract_storage_map(contract, struct_map):
 
 
 def advance_counters(slot_counter, bit_counter):
-    if bit_counter != 0:
+    if bit_counter == 255:
         slot_counter += 1
         bit_counter = 0
     return slot_counter, bit_counter
@@ -236,7 +240,7 @@ def get_primitive_storage_mapping(slot_counter, bit_counter, needed_bits):
     mappings = []
 
     if needed_bits > 256 - bit_counter:
-        slot_counter, bit_counter = advance_counters(slot_counter, bit_counter)
+        slot_counter, bit_counter = slot_counter + 1, 0 #advance_counters(slot_counter, bit_counter)
 
     while needed_bits > 0:
 

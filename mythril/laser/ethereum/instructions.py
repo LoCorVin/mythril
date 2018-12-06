@@ -662,15 +662,72 @@ class Instruction:
 
     @instruction
     def extcodecopy_(self, global_state):
-        # FIXME: not implemented
         state = global_state.mstate
         addr = state.stack.pop()
-        start, s2, size = state.stack.pop(), state.stack.pop(), state.stack.pop()
+        start_memory, start_code, size = state.stack.pop(), state.stack.pop(), state.stack.pop()
+        try:
+            start_memory, start_code, size = util.get_concrete_int(start_memory), util.get_concrete_int(start_code), util.get_concrete_int(size)
+        except ValueError as e:
+            logging.debug("This should not happen as returndataoffsets and length are constant")
+            raise ValueError("Parameters for returndatacopy are not concrete")
+
+        environment = global_state.environment
+        try:
+            addr = hex(helper.get_concrete_int(addr))
+        except AttributeError:
+            logging.info("unsupported symbolic address for EXTCODESIZE")
+            # Annotary: Here i prefere to hard fail then to return some memory with 0 chuns that will be bad foranalysis
+            raise EnvironmentError("Symbolic address value cannot be mapped to concrete or meaningfully symbolic representation of bytecode")
+            #state.stack.append(BitVec("extcodesize_" + str(addr), 256))
+            #return [global_state]
+
+        try:
+            code = self.dynamic_loader.dynld(environment.active_account.address, addr)
+        except Exception as e:
+            logging.info("error accessing contract storage due to: " + str(e))
+            # Annotary: Here i prefere to hard fail then to return some memory with 0 chuns that will be bad foranalysis
+            raise EnvironmentError("Symbolic address value cannot be mapped to concrete or meaningfully symbolic representation of bytecode")
+            #return [global_state]
+
+        if code is None and size > 0:
+            raise ValueError("Code is empty but size is not")
+        if start_code + size > len(code.bytecode) / 2:
+            raise ValueError("Code to short to copy into memory with the given size")
+
+        for i in range(size):
+            if 2 * (start_code + i + 1) <= len(code.bytecode):
+                global_state.mstate.memory[start_code + i] =\
+                    int(code.bytecode[2*(start_code + i): 2*(start_code + i + 1)], 16)
+
+        return [global_state]
+
+    @instruction # Implemented by Annotary
+    def returndatacopy_(self, global_state):
+
+        state = global_state.mstate
+        start_memory, start_return_data, size = state.stack.pop(), state.stack.pop(), state.stack.pop()
+        try:
+            start_memory, start_return_data, size = util.get_concrete_int(start_memory), util.get_concrete_int(start_return_data), util.get_concrete_int(size)
+        except ValueError as e:
+            logging.debug("This should not happen as returndataoffsets and length are constant")
+            raise ValueError("Parameters for returndatacopy are not concrete")
+        return_data = global_state.last_return_data
+
+
+
+        i = 0
+        while i < size:
+            global_state.mstate.memory[start_memory + i] = return_data[start_return_data + i]
+            i += 1
+
         return [global_state]
 
     @instruction
     def returndatasize_(self, global_state):
-        global_state.mstate.stack.append(BitVec("returndatasize", 256))
+        if not hasattr(global_state, "last_return_data") or not global_state.last_return_data or type(global_state.last_return_data) != list:
+            global_state.mstate.stack.append(BitVec("returndatasize" + global_state, 256))
+        else:
+            global_state.mstate.stack.append(BitVecVal(len(global_state.last_return_data), 256))
         return [global_state]
 
     @instruction

@@ -1,4 +1,4 @@
-from z3 import Solver, sat, eq, simplify, is_bool, is_true, is_false, Extract, BitVec, BitVecVal
+from z3 import Solver, sat, eq, simplify, is_bool, is_true, is_false, Extract, BitVec, BitVecVal, is_bv
 from copy import deepcopy
 
 """
@@ -35,6 +35,13 @@ def is_t_variable(var):
         return True
     else:
         return False
+
+def get_bv(exp):
+    if is_bv(exp):
+        return exp
+    if type(exp) == int:
+        return BitVecVal(exp, 256)
+    raise ValueError("Bitvector or int needed")
 
 def simplify_if_necessary(exp):
     if type(exp) in [int, str, float, complex, bool]:
