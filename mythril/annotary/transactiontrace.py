@@ -31,6 +31,14 @@ def has_associated_function(c, s):
     return get_function_from_constraints(c, s.mstate.constraints,
                 isinstance(s.current_transaction, ContractCreationTransaction)) is not None
 
+def clean_primitives(storage):
+    cleaned_storage = {}
+    for k,v in storage._storage.items():
+        if "storage[" + str(k) + "]" != str(v).replace(" ", ""):
+            cleaned_storage[k] = v
+    storage._storage = cleaned_storage
+    return storage
+
 class FunctionDummy:
 
     def __init__(self, name, signature, isConstructor, visibility):
@@ -44,7 +52,7 @@ class TransactionTrace:
     def __init__(self, state, contract=None, lvl=1):
         # self.storage = {k: simplify(v) for k,v in storage }
         constraints = state.mstate.constraints
-        storage = state.environment.active_account.storage
+        storage = clean_primitives(state.environment.active_account.storage)
         self.constraints = simplify_constraints_individually(constraints) # Todo not necessary in the case of violations
         self.functions = []
         if contract:
@@ -250,6 +258,7 @@ class TransactionTrace:
 
         for c_idx in range(len(new_trace.tran_constraints)):
             new_trace.tran_constraints[c_idx].substitute(subs_map) # Todo only substitute if necessary
+        new_trace.tran_constraints.extend(deepcopy(self.tran_constraints))
         new_trace.lvl += self.lvl
         new_trace.sym_names.extend(deepcopy(self.sym_names))
         # self can be omitted (e.g. when related storage locations were overwritten)

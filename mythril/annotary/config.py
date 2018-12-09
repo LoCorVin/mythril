@@ -8,6 +8,8 @@ class Config:
         self.max_transaction_depth = 3
         self.mythril_depth = 25
         self.assign_state_references = True
+        self.set_restricted = {"ignore_length_writing": True}
+        self.search_for_indipendent_chain = True
 
         if filepath:
             with open(filepath) as config_file:

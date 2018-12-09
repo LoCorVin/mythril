@@ -48,7 +48,7 @@ class SolidityMember:
 
 class StorageSlot:
     # Constraint Slot, irrelevant for ConcretSlot and MappingSlot, important for length constraints on the datatypes
-    def may_write_to(self, z3_index, z3_value, storage, constraint_list):
+    def may_write_to(self, z3_index, z3_value, storage, constraint_list, consider_length):
         raise NotImplementedError("Unimplemented Function of Abstract class")
 
 
@@ -62,7 +62,7 @@ class ConcretSlot(StorageSlot):
         self.bit_counter = bit_counter
         self.bitlength = bitlength
 
-    def may_write_to(self, z3_index, z3_value, storage, constraint_list):
+    def may_write_to(self, z3_index, z3_value, storage, constraint_list, consider_length):
         z3_index = simplify(get_bv(z3_index))
         z3_value = simplify(get_bv(z3_value))
 
@@ -78,7 +78,7 @@ class ConcretSlot(StorageSlot):
             same_slot = True
 
         # If not structurally equivalent, check if there is an assignment that allows them to be equivalent
-        if not same_slot and not are_z3_satisfiable(constraint_list + [z3_index == self.slot_counter]):
+        if not same_slot and not are_z3_satisfiable(constraint_list + [z3_index == concret_index]):
             return False, None
         add_constraints.append(simplify(z3_index == self.slot_counter))
 
@@ -102,9 +102,9 @@ class ConcretSlot(StorageSlot):
         # If not, the slot is still written in its entirety but the observed chunk is loaded and overwritten by itself
         to_bit, from_bit = self.bit_counter + self.bitlength - 1, self.bit_counter
         # to_bit, from_bit = BitVecVal(self.bit_counter + self.bitlength - 1, 256), BitVecVal(self.bit_counter, 256)
-        chunk_writing = Extract(to_bit,from_bit, z3_value)
+        chunk_writing = Extract(to_bit, from_bit, z3_value)
 
-        chunk_content = Extract(to_bit,from_bit,
+        chunk_content = Extract(to_bit, from_bit,
                                 get_bv(get_storage_slot(BitVecVal(self.slot_counter, 256), storage)))
 
         # if the current content of the observed chunk and the respective chunk of the written value can be different
@@ -130,7 +130,7 @@ class MappingSlot(StorageSlot):
     def __init__(self, slot_counter):
         self.slot_counter = slot_counter
 
-    def may_write_to(self, z3_index, z3_value, storage, constraint_list):
+    def may_write_to(self, z3_index, z3_value, storage, constraint_list, consider_length):
         # write keccak(...) check if it contains the slot keccak needs the
         z3_index = simplify(z3_index)
         z3_index_str = str(z3_index).replace("\n", "")
@@ -165,11 +165,11 @@ class ArraySlot(StorageSlot):
         self.slot_counter = slot_counter
         self.bitlength = 256
 
-    def may_write_to(self, z3_index, z3_value, storage, constraint_list):
-
-        may_write_to, added_constraints = ConcretSlot.may_write_to(self, z3_index, z3_value, storage, constraint_list)
-        if may_write_to:
-            return may_write_to, added_constraints
+    def may_write_to(self, z3_index, z3_value, storage, constraint_list, consider_length):
+        if consider_length:
+            may_write_to, added_constraints = ConcretSlot.may_write_to(self, z3_index, z3_value, storage, constraint_list, consider_length)
+            if may_write_to:
+                return may_write_to, added_constraints
 
         slot_hash = utils.sha3(utils.bytearray_to_bytestr(util.concrete_int_to_bytes(self.slot_counter)))
         slot_hash = str(BitVecVal(util.concrete_int_from_bytes(slot_hash, 0), 256))
@@ -197,9 +197,9 @@ class BytesSlot(StorageSlot):
         self.slot_counter = slot_counter
         self.bitlength = 256
 
-    def may_write_to(self, z3_index, z3_value, storage, constraint_list):
-
-        may_write_to, added_constraints = ArraySlot.may_write_to(self, z3_index, z3_value, storage, constraint_list)
+    def may_write_to(self, z3_index, z3_value, storage, constraint_list, consider_length):
+        # The representative field also includes content, for this reason it is always considers
+        may_write_to, added_constraints = ArraySlot.may_write_to(self, z3_index, z3_value, storage, constraint_list, True)
         return may_write_to, added_constraints
 
     def may_read_from(self, z3_index, z3_value, storage, constraint_list):
@@ -225,7 +225,7 @@ def extract_storage_map(contract, struct_map):
 
 
 def advance_counters(slot_counter, bit_counter):
-    if bit_counter == 255:
+    if bit_counter >= 255:
         slot_counter += 1
         bit_counter = 0
     return slot_counter, bit_counter
@@ -270,7 +270,7 @@ def add_multiple_items_to_counters(slot_counter, bit_counter, bits_p_elem, amoun
             else:
                 bit_counter += bits_p_elem
                 amount_elements -= 1
-                if bit_counter == 256:
+                if bit_counter >= 255:
                     slot_counter += 1
                     bit_counter = 0
     return slot_counter, bit_counter
@@ -328,6 +328,7 @@ def get_storage_mapping_for_types(contract, struct_map, m_type, slot_counter=0, 
 
         slot_counter += 1
         bit_counter = 0
+        return m_info, slot_counter, bit_counter
     if m_type.startswith('struct '):
         struct_abs_name = m_type[len('struct '):]
         try:
@@ -338,6 +339,7 @@ def get_storage_mapping_for_types(contract, struct_map, m_type, slot_counter=0, 
         # Todo here we should inspect if struct_types have the expected format: list of types
         nested_m_info, slot_counter, bit_counter = get_storage_mapping_for_types(contract, struct_map, struct_types, slot_counter, bit_counter)
         m_info.extend(nested_m_info)
+        return m_info, slot_counter, bit_counter
 
     if m_type.startswith("contract"):
         m_type = 'address'

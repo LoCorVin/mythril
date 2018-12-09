@@ -126,16 +126,16 @@ def get_annotated_members(contract, code, start, content, annotation_length):
 def init_annotation(contract, code, head, kw, start, end, origin, config):
     if kw == "check":
         content, content_prefix = get_annotation_content(code, start + len(head))
-        return CheckAnnotation(code[start:(end + content_prefix)] + content + ")", get_pos_line_col(code[:start]), origin)
+        return CheckAnnotation(code[start:(end + content_prefix)] + content + ")", get_pos_line_col(code[:start]), origin, config=config)
     elif kw == "invariant":
         content, content_prefix = get_annotation_content(code, start + len(head))
         return InvariantAnnotation(contract, code[start:(end + content_prefix)] + content + ")",
-                                   get_pos_line_col(code[:start]), origin, config.assign_state_references)
+                                   get_pos_line_col(code[:start]), origin, config.assign_state_references, config=config)
     elif kw == "set_restricted":
         content, content_prefix = get_annotation_content(code, start + len(head))
         member_vars = get_annotated_members(contract, code, start, content, len(head + content) + 2)
         return SetRestrictionAnnotation(contract, code[start:(end + content_prefix)] + content + ")", content,
-                member_vars, get_pos_line_col(code[:start]), origin)
+                member_vars, get_pos_line_col(code[:start]), origin, config=config)
 
     elif kw == "ethersink":
         pass
@@ -502,9 +502,9 @@ class Annotation:
 
 class CheckAnnotation(Annotation):
 
-    def __init__(self, annotation_str, loc, origin_loc):
+    def __init__(self, annotation_str, loc, origin_loc, config):
         self.title = "Check annotation"
-
+        self.config = config
         self.annotation_str = annotation_str
         self.loc = loc
         self.origin = origin_loc # Has to be calculated before
@@ -542,13 +542,14 @@ class CheckAnnotation(Annotation):
 class InvariantAnnotation(Annotation):
 
 
-    def __init__(self, contract, annotation_str, loc, origin_loc, assign_state_references):
+    def __init__(self, contract, annotation_str, loc, origin_loc, assign_state_references, config):
         self.title = "Invariant annotation"
 
         self.annotation_str = annotation_str
         self.loc = loc
         self.origin = origin_loc
 
+        self.config = config
         self.rewritings = []
         self.assign_state_references = assign_state_references
 
@@ -690,10 +691,11 @@ class SetRestrictionAnnotation(Annotation):
 
     # Any function name, or signature, 'constructor' or contract name for constructor, empty content or '()' as parameter
 
-    def __init__(self, contract, annotation_str, content, member_variables, loc, origin_loc):
+    def __init__(self, contract, annotation_str, content, member_variables, loc, origin_loc, config):
         self.title = "Set restriction annotation"
         self.annotation_str = annotation_str
         self.loc = loc
+        self.config = config
         self.origin = origin_loc
         self.rewritings = []
         self.content = annotation_str[(annotation_str.index("(") + 1):][::-1]
@@ -764,7 +766,7 @@ class SetRestrictionAnnotation(Annotation):
                     for member_name, storage_slots in self.storage_slot_map.items():
                         for storage_slot in storage_slots:
                             may_write_to, constraints = storage_slot.may_write_to(state.mstate.stack[-1],
-                                    state.mstate.stack[-2], state.environment.active_account.storage._storage, state.mstate.constraints)
+                                    state.mstate.stack[-2], state.environment.active_account.storage._storage, state.mstate.constraints, consider_length=not self.config.set_restricted['ignore_length_writing'])
                             if may_write_to:
 
                                 si_and_mapping = get_si_from_state(self.annotation_contract, anchor_state.instruction['address'], anchor_state)

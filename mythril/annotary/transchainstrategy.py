@@ -119,6 +119,7 @@ class BackwardChainStrategy(ChainStrategy):
             printd(annotation.annotation_str)
             try:
                 while violations:
+                    constructor_chain = None
                     violation = violations.popleft()
                     if violation.status == Status.VSINGLE:
                         continue
@@ -132,16 +133,21 @@ class BackwardChainStrategy(ChainStrategy):
                                     raise ViolationFinishedException
                                 for t in traces:
                                     is_const = False
-                                    if refines_constraints(t.storage, v.constraints):
+                                    if refines_constraints(t.storage, v.tran_constraints):
                                         vt_new = t.apply_trace(v)
                                         if t in self.const_traces:
                                             is_const = True
-                                            zeroize_storage_vars(t)
+                                            if constructor_chain:
+                                                continue
+                                            zeroize_storage_vars(vt_new)
                                         if not contains_storage_reference(vt_new):
                                             if are_z3_satisfiable([constraint.constraint for constraint in vt_new.tran_constraints]):
-                                                violation.trace = vt_new
-                                                violation.status = Status.VCHAIN
-                                                raise ViolationFinishedException()
+                                                if self.config.search_for_indipendent_chain and is_const:
+                                                    constructor_chain = (vt_new, Status.VCHAIN)
+                                                else:
+                                                    violation.trace = vt_new
+                                                    violation.status = Status.VCHAIN
+                                                    raise ViolationFinishedException()
                                             else:
                                                 printd("Constraints not Satisfiable")
 
@@ -149,14 +155,22 @@ class BackwardChainStrategy(ChainStrategy):
                                             if not is_const:
                                                 new_vs.append(vt_new)
                             if not new_vs:
-                                violation.trace = None
-                                violation.status = Status.HOLDS
+                                if constructor_chain:
+                                    violation.trace = constructor_chain[0]
+                                    violation.status = constructor_chain[1]
+                                else:
+                                    violation.trace = None
+                                    violation.status = Status.HOLDS
                                 raise ViolationFinishedException()
                             else:
                                 vts = deque(new_vs)
                         if vts:
-                            violation.status = Status.VDEPTH
-                            violation.trace = vts[0]
+                            if constructor_chain:
+                                violation.trace = constructor_chain[0]
+                                violation.status = constructor_chain[1]
+                            else:
+                                violation.status = Status.VDEPTH
+                                violation.trace = vts[0]
                     except ViolationFinishedException as v:
                         pass
             except AnnotationFinishedException as a:

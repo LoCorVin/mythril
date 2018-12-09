@@ -24,7 +24,7 @@ class IType(Enum):
     EXIT = 1
     VIOLATION = 2
 
-class PrePostProcessor:
+class StateProcessor:
 
     """
         Two functions 'preprocess' and 'postprocess' that are to be hooked in before and after processing an
@@ -48,7 +48,7 @@ class PrePostProcessor:
     def filter(self, new_states):
         raise NotImplementedError("PrePostProcessing interface")
 
-class AnnotationProcessor(PrePostProcessor):
+class AnnotationProcessor(StateProcessor):
     # This still has one disadvantage, the actual instruction sets that are used by different analysis if using the resulting
     # symbolic execution. Traces can also be build from the annotation modified symbolic execution. But running the
     # mythril analysis modules on the modified contract might give different results due to the processing of nodes and not states
@@ -163,8 +163,7 @@ class AnnotationProcessor(PrePostProcessor):
 
         if self.is_this_or_previouse_ignore_type(global_state, IType.VIOLATION): # violation
             printd("violation")
-            # Should not be necessary as conditions are simplified when conditions are build in jumpi
-            #for idx in range(len(global_state.mstate.constraints)):
+
             #    global_state.mstate.constraints[idx] = simplify(global_state.mstate.constraints[idx])
             if True: # are_z3_satisfiable(global_state.mstate.constraints):
                 violating_state = deepcopy(global_state)
@@ -201,8 +200,6 @@ class AnnotationProcessor(PrePostProcessor):
         for new_state in new_global_states:
             if hasattr(new_state, "duplicate"):
                 del new_state.duplicate
-        #else:
-            #print("Nothing to carry")
 
         for state_idx in range(len(new_global_states)):
             new_state = new_global_states[state_idx]

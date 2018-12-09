@@ -173,10 +173,15 @@ class Instruction:
     @instruction
     def add_(self, global_state):
         op1, op2 = helper.pop_bitvec(global_state.mstate), helper.pop_bitvec(global_state.mstate)
-
+        op1_str, op2_str = str(op1).replace("\n", ""), str(op2).replace("\n", "")
         # Augmentation to backtrace hash computations
-        if str(op1).replace("\n", "") in keccac_map or str(op2).replace("\n", "") in keccac_map:
-            keccac_map[str(simplify(op1+op2)).replace("\n", "")] = op1 + op2
+        if op1_str in keccac_map or op2_str in keccac_map:
+            op1_original, op2_original = op1, op2
+            #if op1_str in keccac_map:
+            #    op1_original = keccac_map[op1_str]
+            #if op2_str in keccac_map:
+            #    op2_original = keccac_map[op2_str]
+            keccac_map[str(simplify(op1+op2)).replace("\n", "")] = op1_original + op2_original
         global_state.mstate.stack.append(op1 + op2)
         return [global_state]
 
