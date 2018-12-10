@@ -135,22 +135,24 @@ class BackwardChainStrategy(ChainStrategy):
                                     is_const = False
                                     if refines_constraints(t.storage, v.tran_constraints):
                                         vt_new = t.apply_trace(v)
+                                        if not vt_new: # If resulting trace contains not satisfiable constraints, the trace is skipped
+                                            continue
                                         if t in self.const_traces:
                                             is_const = True
                                             if constructor_chain:
                                                 continue
                                             zeroize_storage_vars(vt_new)
+                                            # Satisfiability check already done when combining traces, only repeat here because zeroizing might render
+                                            # The constraints unsatisfiable
+                                            if not are_z3_satisfiable([constraint.constraint for constraint in vt_new.tran_constraints]):
+                                                continue
                                         if not contains_storage_reference(vt_new):
-                                            if are_z3_satisfiable([constraint.constraint for constraint in vt_new.tran_constraints]):
-                                                if self.config.search_for_indipendent_chain and is_const:
-                                                    constructor_chain = (vt_new, Status.VCHAIN)
-                                                else:
-                                                    violation.trace = vt_new
-                                                    violation.status = Status.VCHAIN
-                                                    raise ViolationFinishedException()
+                                            if self.config.search_for_indipendent_chain and is_const:
+                                                constructor_chain = (vt_new, Status.VCHAIN)
                                             else:
-                                                printd("Constraints not Satisfiable")
-
+                                                violation.trace = vt_new
+                                                violation.status = Status.VCHAIN
+                                                raise ViolationFinishedException()
                                         else:
                                             if not is_const:
                                                 new_vs.append(vt_new)

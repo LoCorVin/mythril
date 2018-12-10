@@ -4,7 +4,7 @@ from functools import reduce
 from mythril.annotary.z3utility import are_z3_satisfiable
 from z3 import eq, BitVecVal, BitVec, Extract, Not, simplify, is_bv
 from mythril.laser.ethereum.util import get_concrete_int
-from mythril.laser.ethereum.instructions import keccac_map
+from mythril.laser.ethereum.instructions import keccak_map
 from re import finditer
 
 from ethereum import utils
@@ -85,8 +85,8 @@ class ConcretSlot(StorageSlot):
         index_str = str(z3_index)
         # Rule out keccak symbolic variable as the function prevents someone from arbitrarily controlling the index
 
-        if len(z3_index.children()) < 2 and index_str.startswith("keccac") \
-                or "+" in index_str and index_str[:index_str.index("+")].strip() in keccac_map :
+        if len(z3_index.children()) < 2 and index_str.startswith("keccak") \
+                or "+" in index_str and index_str[:index_str.index("+")].strip() in keccak_map :
             return False, None # Todo Here I might do something more elaborate if I see that it does actually not solve critical writings
 
         # Problem because writing to an array has a keccak offset, but if the index can be arbitrarely choosen z3 finds
@@ -134,16 +134,16 @@ class MappingSlot(StorageSlot):
         # write keccak(...) check if it contains the slot keccak needs the
         z3_index = simplify(z3_index)
         z3_index_str = str(z3_index).replace("\n", "")
-        if "keccac(Concat(" in z3_index_str:
-            for match in finditer(r'keccac\(Concat\(', z3_index_str ):
+        if "keccak(Concat(" in z3_index_str:
+            for match in finditer(r'keccak\(Concat\(', z3_index_str ):
                 match_str = z3_index_str[match.start():]
-                match_str = match_str[len("keccac(Concat("):find_matching_closed_bracket(match_str, len("keccac(Concat"))]
-                if not "keccac(" in match_str:
+                match_str = match_str[len("keccak(Concat("):find_matching_closed_bracket(match_str, len("keccak(Concat"))]
+                if not "keccak(" in match_str:
                     if str(match_str).endswith(",_" + str(self.slot_counter)):
-                        return True, [] # Found store with unresolved keccac-references
+                        return True, [] # Found store with unresolved keccak-references
 
-        if z3_index_str in keccac_map:
-            unresolved_index = keccac_map[str(z3_index).replace("\n" , "")]
+        if z3_index_str in keccak_map:
+            unresolved_index = keccak_map[str(z3_index).replace("\n" , "")]
             unresolved_index = str(unresolved_index).replace("\n", "")
             if "Concat(" in unresolved_index:
                 for match in finditer(r'Concat\(', unresolved_index):
@@ -179,8 +179,8 @@ class ArraySlot(StorageSlot):
         if z3_index_str.startswith(slot_hash):
             if z3_index_str.endswith(slot_hash) or z3_index_str[len(slot_hash):].startswith(" +"):
                 return True, []
-        if z3_index_str in keccac_map:
-            unresolved_index = keccac_map[str(z3_index).replace("\n" , "")]
+        if z3_index_str in keccak_map:
+            unresolved_index = keccak_map[str(z3_index).replace("\n" , "")]
             unresolved_index = str(unresolved_index).replace("\n", "")
             if unresolved_index.startswith(str(self.slot_counter)):
                 if unresolved_index.endswith(str(self.slot_counter)) or unresolved_index[len(str(self.slot_counter)):].startswith(" +"):

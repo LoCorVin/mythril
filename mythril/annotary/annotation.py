@@ -14,7 +14,7 @@ from z3 import simplify, is_true, eq
 
 
 
-from mythril.laser.ethereum.instructions import keccac_map
+from mythril.laser.ethereum.instructions import keccak_map
 
 
 
@@ -219,7 +219,7 @@ def get_anchor_state(contract, state):
     return matching_states[0]
 
 def get_persistant_state(contract, state):
-    matching_states = get_matching_state_multisearch(contract.states, [(is_not_ignored, None, False, "BACKWARD"), (is_halting_instruction, None, True, "FORWARD")], state)
+    matching_states = get_matching_state_multisearch(contract.states, [(is_not_ignored, None, False, "BACKWARD"), (is_persiting_instruction, None, True, "FORWARD")], state)
     return matching_states
 
 def merge_constraints(consts1, consts2):
@@ -680,7 +680,7 @@ def is_not_ignored(_, state):
     return not (hasattr(state, "ignore") or "is" in state.instruction)
 
 
-def is_halting_instruction( _, state):
+def is_persiting_instruction( _, state):
     return state.instruction['opcode'] in ['STOP', 'RETURN', 'SELFDESTRUCT'] and (not hasattr(state, "next") or not state.next)
 
 

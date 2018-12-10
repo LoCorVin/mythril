@@ -5,7 +5,7 @@ from mythril.support.loader import DynLoader
 from mythril.ether.soliditycontract import SolidityContract
 from mythril.laser.ethereum.state import MachineState, GlobalState, Account, Environment, CalldataType
 from mythril.laser.ethereum.transaction import ContractCreationTransaction
-from mythril.laser.ethereum.instructions import keccac_map
+from mythril.laser.ethereum.instructions import keccak_map
 
 from mythril.annotary.sn_utils import get_sourcecode_and_mapping, flatten, find_contract_idx_range, get_containing_file
 from mythril.annotary.transactiontrace import TransactionTrace
@@ -398,8 +398,8 @@ class Annotary:
         constr_calldata_len = get_minimal_constructor_param_encoding_len(abi_json_to_abi(contract.abi))
         sym_code_extension = SymbolicCodeExtension("calldata", contract.name, constr_calldata_len)
 
-        global keccac_map
-        keccac_map = {}
+        global keccak_map
+        keccak_map = {}
         if self.max_depth:
             self.config.mythril_depth = self.max_depth
         printd("Sym Exe: " + str(contract.name))
@@ -538,7 +538,6 @@ def get_traces(statespace, contract):
 def get_trace_for_state(state):
     ''' Returns a representation of a transaction trace if this state marks a transaction en, if not None is returned'''
     instruction = state.get_current_instruction()
-    # Todo should I ignore certain functions: non public or external functions ???
     if instruction['opcode'] in ["STOP", "RETURN"]:
         storage = state.environment.active_account.storage
         if storage and not is_storage_primitive(storage) and are_z3_satisfiable(state.mstate.constraints):
@@ -558,6 +557,7 @@ def get_trace_for_state(state):
                     return "c", trace
                 else:
                     return "t", trace
+            # The case with no mapping at a STOP or RETURN instruction is ignore
     return None, None
 
 

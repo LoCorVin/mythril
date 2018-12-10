@@ -18,7 +18,7 @@ from mythril.laser.ethereum.transaction import MessageCallTransaction, Transacti
     ContractCreationTransaction, CreateNewContractSignal
 from mythril.laser.ethereum.state import Storage
 
-keccac_map = {}
+keccak_map = {}
 
 TT256 = 2 ** 256
 TT256M1 = 2 ** 256 - 1
@@ -175,13 +175,13 @@ class Instruction:
         op1, op2 = helper.pop_bitvec(global_state.mstate), helper.pop_bitvec(global_state.mstate)
         op1_str, op2_str = str(op1).replace("\n", ""), str(op2).replace("\n", "")
         # Augmentation to backtrace hash computations
-        if op1_str in keccac_map or op2_str in keccac_map:
+        if op1_str in keccak_map or op2_str in keccak_map:
             op1_original, op2_original = op1, op2
-            #if op1_str in keccac_map:
-            #    op1_original = keccac_map[op1_str]
-            #if op2_str in keccac_map:
-            #    op2_original = keccac_map[op2_str]
-            keccac_map[str(simplify(op1+op2)).replace("\n", "")] = op1_original + op2_original
+            #if op1_str in keccak_map:
+            #    op1_original = keccak_map[op1_str]
+            #if op2_str in keccak_map:
+            #    op2_original = keccak_map[op2_str]
+            keccak_map[str(simplify(op1+op2)).replace("\n", "")] = op1_original + op2_original
         global_state.mstate.stack.append(op1 + op2)
         return [global_state]
 
@@ -516,7 +516,7 @@ class Instruction:
             # Can't access symbolic memory offsets
             if is_expr(op0):
                 op0 = simplify(op0)
-            state.stack.append(BitVec("KECCAC_mem[" + str(op0) + "]", 256))
+            state.stack.append(BitVec("keccak_mem[" + str(op0) + "]", 256))
             return [global_state]
 
         try:
@@ -559,27 +559,27 @@ class Instruction:
 
             svar = svar.replace(" ", "_")
 
-            state.stack.append(BitVec("keccac(" + svar+ ")", 256))
+            state.stack.append(BitVec("keccak(" + svar+ ")", 256))
             return [global_state]
 
-        keccac = utils.sha3(utils.bytearray_to_bytestr(data))
-        logging.debug("Computed SHA3 Hash: " + str(binascii.hexlify(keccac)))
-        keccac_result = BitVecVal(util.concrete_int_from_bytes(keccac, 0), 256)
+        keccak = utils.sha3(utils.bytearray_to_bytestr(data))
+        logging.debug("Computed SHA3 Hash: " + str(binascii.hexlify(keccak)))
+        keccak_result = BitVecVal(util.concrete_int_from_bytes(keccak, 0), 256)
 
-        keccac_map[str(keccac_result)] = None
+        keccak_map[str(keccak_result)] = None
         i = 0
         while i < length:
             bitvec = BitVecVal(util.concrete_int_from_bytes(data, i), (len(data) - i)*8 if len(data) - i < 32 else 256 )
             bitvec_key = str(bitvec).replace("\n", "")
-            if bitvec_key in keccac_map:
-                bitvec = keccac_map[bitvec_key]
-            if keccac_map[str(keccac_result)] is None:
-                keccac_map[str(keccac_result)] = bitvec
+            if bitvec_key in keccak_map:
+                bitvec = keccak_map[bitvec_key]
+            if keccak_map[str(keccak_result)] is None:
+                keccak_map[str(keccak_result)] = bitvec
             else:
-                keccac_map[str(keccac_result)] = Concat(keccac_map[str(keccac_result)], bitvec)
+                keccak_map[str(keccak_result)] = Concat(keccak_map[str(keccak_result)], bitvec)
             i += 32
 
-        state.stack.append(keccac_result)
+        state.stack.append(keccak_result)
         return [global_state]
 
     @instruction

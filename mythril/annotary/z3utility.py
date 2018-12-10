@@ -16,8 +16,8 @@ def is_t_variable(var):
         or var.startswith("calldata_")
         or var.startswith("calldatasize_")
         or var.startswith("balance_at")
-        or var.startswith("KECCAC_mem_")
-        or var.startswith("keccac_")
+        or var.startswith("keccak_mem_")
+        or var.startswith("keccak_")
         or var.startswith("gasprice")
         or var.startswith("extcodesize")
         or var.startswith("returndatasize")
@@ -30,8 +30,7 @@ def is_t_variable(var):
         or var.startswith("mem_")
         or var.startswith("msize")
         or var.startswith("gas")
-        or var.startswith("retval_")
-        or var.startswith("keccac_")):
+        or var.startswith("retval_")):
         return True
     else:
         return False
