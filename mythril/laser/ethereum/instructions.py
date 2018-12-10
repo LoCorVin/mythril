@@ -1094,6 +1094,7 @@ class Instruction:
             # TODO: decide what to do in this case
             global_state.mstate.stack.append(BitVec("retval_" + str(instr['address']), 256))
             return [global_state]
+        callee_account.balance += value
         global_state.mstate.stack.append(BitVec("retval_" + str(instr['address']), 256))
 
         if 0 < int(callee_address, 16) < 5:
