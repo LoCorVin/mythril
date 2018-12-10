@@ -19,8 +19,7 @@ def execute_message_call(laser_evm, callee_address):
             open_world_state = open_states[0]
             open_world_state.accounts = deepcopy(open_world_state.accounts)
             for address, account in open_world_state.accounts.items():
-                account.storage = Storage()
-                account.balance = BitVec("balance", 256)
+                account.reset_state()
             if not laser_evm.open_states:
                 laser_evm.open_states.append(open_world_state)
             else:

@@ -132,15 +132,14 @@ class BackwardChainStrategy(ChainStrategy):
                                 if violation.status in [Status.VSINGLE or Status.VCHAIN]:
                                     raise ViolationFinishedException
                                 for t in traces:
-                                    is_const = False
+                                    is_const = t in self.const_traces
+                                    if constructor_chain and is_const:
+                                        continue
                                     if refines_constraints(t.storage, v.tran_constraints):
                                         vt_new = t.apply_trace(v)
                                         if not vt_new: # If resulting trace contains not satisfiable constraints, the trace is skipped
                                             continue
-                                        if t in self.const_traces:
-                                            is_const = True
-                                            if constructor_chain:
-                                                continue
+                                        if is_const:
                                             zeroize_storage_vars(vt_new)
                                             # Satisfiability check already done when combining traces, only repeat here because zeroizing might render
                                             # The constraints unsatisfiable

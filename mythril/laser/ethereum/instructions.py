@@ -475,6 +475,14 @@ class Instruction:
     def balance_(self, global_state):
         state = global_state.mstate
         address = state.stack.pop()
+        try:
+            address_hex = util.get_concrete_int(simplify(address))
+            active_address = int(global_state.environment.active_account.address, 16)
+            if address_hex == active_address:
+                state.stack.append(global_state.environment.active_account.balance)
+                return [global_state]
+        except:
+            pass
         state.stack.append(BitVec("balance_at[" + str(address) + "]", 256))
         return [global_state]
 
@@ -730,7 +738,8 @@ class Instruction:
     @instruction
     def returndatasize_(self, global_state):
         if not hasattr(global_state, "last_return_data") or not global_state.last_return_data or type(global_state.last_return_data) != list:
-            global_state.mstate.stack.append(BitVec("returndatasize" + global_state, 256))
+            global_state.mstate.stack.append(BitVecVal(0, 256))
+            # global_state.mstate.stack.append(BitVec("returndatasize_" + str(id(global_state)), 256))
         else:
             global_state.mstate.stack.append(BitVecVal(len(global_state.last_return_data), 256))
         return [global_state]
@@ -1009,6 +1018,8 @@ class Instruction:
         state = global_state.mstate
         v, s, l = state.stack.pop(), state.stack.pop(), state.stack.pop()
 
+        global_state.environment.active_account.balance -= v
+
 
         try:
             s = util.get_concrete_int(s)
@@ -1071,6 +1082,8 @@ class Instruction:
         instr = global_state.get_current_instruction()
         environment = global_state.environment
 
+        value = global_state.mstate.stack[-3]
+        global_state.environment.active_account.balance -= value
         try:
             callee_address, callee_account, call_data, value, call_data_type, gas, memory_out_offset, memory_out_size = get_call_parameters(
                 global_state, self.dynamic_loader, True)
@@ -1115,7 +1128,7 @@ class Instruction:
             return [global_state]
 
         # Todo Annotary CHanged this: storage is set to symbolic
-        callee_account.storage = Storage()
+        callee_account.reset_state()
 
         transaction = MessageCallTransaction(global_state.world_state,
                                              callee_account,
@@ -1377,7 +1390,7 @@ class Instruction:
             return [global_state]
 
         # Todo Annotary Changed this: storage is set to symbolic
-        callee_account.storage = Storage()
+        callee_account.reset_state()
 
         transaction = MessageCallTransaction(global_state.world_state,
                                              callee_account,

@@ -67,6 +67,10 @@ class Account:
         self.address = address
         self.contract_name = contract_name
 
+    def reset_state(self):
+        self.storage = Storage(address=self.address)
+        self.balance = BitVec("balance", 256)
+
     def __str__(self):
         return str(self.as_dict)
 
