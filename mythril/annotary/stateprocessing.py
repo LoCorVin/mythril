@@ -127,11 +127,8 @@ class AnnotationProcessor(StateProcessor):
             printd("Pick up duplicate")
 
         message_type = "T"
-        mappings = self.contract.mappings
-        istr_list = global_state.environment.code.instruction_list
         if isinstance(global_state.current_transaction, ContractCreationTransaction):
             message_type = "C"
-            mappings = self.contract.creation_mappings
 
         context_instructions = self.get_context_instructions(global_state)
         context_istr_idx = instr_index(context_instructions, instr)
@@ -139,13 +136,8 @@ class AnnotationProcessor(StateProcessor):
             printd(message_type + " " + str( instr) + " stack: " + str(global_state.mstate.stack).replace("\n", "")+ " constr: " + str(global_state.mstate.constraints).replace("\n", ""))
             return global_state # In delgate functions, no beginning of rewriting instruction blocks exist
         instruction = context_instructions[context_istr_idx]
-        # printd(message_type + " " + str( instruction)+ " m: " + str(get_sourcecode_and_mapping(instruction['address'], istr_list, mappings)))
 
         printd(message_type + " " + str( instruction) + " stack: " + str(global_state.mstate.stack).replace("\n", "") + " constr: " + str(global_state.mstate.constraints).replace("\n", ""))
-
-        #print(message_type +" " + str(self.get_context_instructions(global_state)[instr_index(self.get_context_instructions(global_state), instr)])\
-        #+ "     " + str(global_state.environment.active_account.storage._storage).replace("\n", "") + "    "
-        #        + str(global_state.mstate.stack).replace("\n", ""))
         if self.is_this_or_previouse_ignore_type(global_state, IType.ENTRY):
             if hasattr(global_state, 'saved_state'): # Skip
                 printd("Skip")
@@ -153,7 +145,6 @@ class AnnotationProcessor(StateProcessor):
                 istr_idx = instr_index(instructions, ign_exit_istr)
                 global_state.mstate.pc = istr_idx + 1
             else: # Save
-                # Todo Here we do now only MARK the state to be ignored
                 printd("Save")
                 helper_state_ref = global_state
                 global_state = deepcopy(helper_state_ref)

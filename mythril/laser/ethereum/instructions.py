@@ -1280,7 +1280,8 @@ class Instruction:
             # todo not as trivial, storage vars in constraints must be changed, but how without affecting mythril execution?
             #if global_state.environment.active_account.storage.delegate:
             #    delegate = global_state.environment.active_account.storage.delegate + 1
-            global_state.environment.active_account.storage = Storage()
+            global_state.environment.active_account.reset_state()
+            global_state.call_type = 'UNRESOLVED'
 
             return [global_state]
 

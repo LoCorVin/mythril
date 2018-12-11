@@ -178,6 +178,7 @@ class GlobalState:
     def __init__(self, world_state, environment, node, machine_state=None, transaction_stack=None, last_return_data=None):
         """ Constructor for GlobalState"""
         self.node = node
+        self.call_type = None
         self.world_state = world_state
         self.environment = environment
         self.mstate = machine_state if machine_state else MachineState(gas=10000000)

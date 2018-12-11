@@ -38,7 +38,7 @@ def get_transaction_functions(contract):
             if not constructor_function:
                 constructor_function = True
                 t_functions.append(func)
-        elif len(func.hash) <= 0:
+        elif len(func.name) <= 0:
             if not default_function:
                 default_function = True
                 t_functions.append(func)

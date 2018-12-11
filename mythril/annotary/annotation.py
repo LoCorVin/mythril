@@ -366,7 +366,6 @@ class Annotation:
 
         self.viol_rews = [] # List of rewritings that contain code to be traceless in the symbolic execution
 
-        # Todo These may not be necessary for the rest of the execution as enter, exit and violating instr.define enough
         self.viol_rew_instrs = [] # list of instructions lists that are associated to the rewriting in the same position
 
         self.viol_inst = [] # Single instruction that triggers the violation through 'ASSERT_FAIL'
@@ -720,7 +719,14 @@ class SetRestrictionAnnotation(Annotation):
     def build_violations(self, sym_myth):
         for _, node in sym_myth.nodes.items():
             for state in node.states:
-                if state.instruction['opcode'] == "SSTORE":
+                unresolved_delegatecall = False
+                if state.instruction['opcode'] in ['CALLCODE', 'DELEGATECALL'] and hasattr(state, 'next'):
+                    for id in state.next:
+                        next = self.annotation_contract.states[id]
+                        if hasattr(next, 'call_type') and next.call_type == 'UNRESOLVED':
+                            unresolved_delegatecall = True
+
+                if state.instruction['opcode'] == "SSTORE" or unresolved_delegatecall:
                     function = None
                     state_in_delegate = False
 
@@ -763,24 +769,32 @@ class SetRestrictionAnnotation(Annotation):
                         or state.environment.active_function_name in delegate_res_signatures:
                         continue
 
-                    for member_name, storage_slots in self.storage_slot_map.items():
-                        for storage_slot in storage_slots:
-                            may_write_to, constraints = storage_slot.may_write_to(state.mstate.stack[-1],
-                                    state.mstate.stack[-2], state.environment.active_account.storage._storage, state.mstate.constraints, consider_length=not self.config.set_restricted['ignore_length_writing'])
-                            if may_write_to:
+                    if unresolved_delegatecall:
+                        for member_name, storage_slots in self.storage_slot_map.items():
+                            self.add_violations([state], self.annotation_contract, member_name,
+                                                vio_description="This call statement could not be resolved and thus not analyzed. The call may write to the member variable '" + storage_slots[0].member.name
+                                                                + "' of type '" + storage_slots[0].member.type + "' although not allowed by the annotation: " + str(
+                                                    self.annotation_str), rew_based=False, set_anchor_state=anchor_state)
 
-                                si_and_mapping = get_si_from_state(self.annotation_contract, anchor_state.instruction['address'], anchor_state)
+                    else:
+                        for member_name, storage_slots in self.storage_slot_map.items():
+                            for storage_slot in storage_slots:
+                                may_write_to, constraints = storage_slot.may_write_to(state.mstate.stack[-1],
+                                        state.mstate.stack[-2], state.environment.active_account.storage._storage, state.mstate.constraints, consider_length=not self.config.set_restricted['ignore_length_writing'])
+                                if may_write_to:
 
-                                src_info, mapping = si_and_mapping
-                                printd("Contract may write to forbidden slot: " + str(src_info.lineno) + ":: " + src_info.code)
-                                new_state = state
-                                if constraints and len(constraints) > 0:
-                                    new_state = deepcopy(state) # update with the assumtion taken by the may_write
+                                    si_and_mapping = get_si_from_state(self.annotation_contract, anchor_state.instruction['address'], anchor_state)
 
-                                    new_state.mstate.constraints.extend(constraints)
-                                self.add_violations([new_state], self.annotation_contract, member_name,
-                                    vio_description="This statement may write to the member variable '" + storage_slot.member.name
-                                                    + "' of type '" + storage_slot.member.type+"' although not allowed by the annotation: " + str(self.annotation_str), rew_based=False, set_anchor_state=anchor_state)
+                                    src_info, mapping = si_and_mapping
+                                    printd("Contract may write to forbidden slot: " + str(src_info.lineno) + ":: " + src_info.code)
+                                    new_state = state
+                                    if constraints and len(constraints) > 0:
+                                        new_state = deepcopy(state) # update with the assumtion taken by the may_write
+
+                                        new_state.mstate.constraints.extend(constraints)
+                                    self.add_violations([new_state], self.annotation_contract, member_name,
+                                        vio_description="This statement may write to the member variable '" + storage_slot.member.name
+                                                        + "' of type '" + storage_slot.member.type+"' although not allowed by the annotation: " + str(self.annotation_str), rew_based=False, set_anchor_state=anchor_state)
 
 
     def trans_violations_check(self, sym_tran, sym_con): # Or should i get the predfiltered transaction or even builded chains here

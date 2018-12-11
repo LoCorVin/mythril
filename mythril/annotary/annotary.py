@@ -304,8 +304,6 @@ class Annotary:
 
 
     def build_annotated_contracts(self):
-        file_rewritings = {}
-
         for contract in self.contracts:
             if contract.name not in self.annotation_map:
                 continue
@@ -315,8 +313,6 @@ class Annotary:
 
             contract_range = find_contract_idx_range(contract)
             contract_code = file_code[contract_range[0]:(contract_range[2] + 1)]
-
-            # Todo Subtract contract offset
 
             contract_prefix = file_code[:contract_range[0]]
             contract_suffix = file_code[(contract_range[2] + 1):]
@@ -347,10 +343,6 @@ class Annotary:
 
             rew_file_code = contract_prefix + rew_contract_code + contract_suffix
 
-            # in line should be done for every annotation later
-            #printd("----")
-            #printd(rew_file_code)
-            #printd("----")
             printd("Rewritten code")
             printd(rew_file_code)
             write_code(sol_file.filename, rew_file_code)
@@ -358,7 +350,6 @@ class Annotary:
             annotation_contract = SolidityContract(sol_file.filename, contract.name, solc_args=self.solc_args)
             augment_with_ast_info(annotation_contract)
             annotation_contract.rewritings = rewritings
-            # Todo maybe i dont need this
             annotation_contract.origin_file_code = file_code
             annotation_contract.original_contract = contract
             self.annotated_contracts.append(annotation_contract)
@@ -377,13 +368,10 @@ class Annotary:
         create_ignore_list = []
         trans_ignore_list = []
 
-        # ignore_list = []
-
         for annotation in self.annotation_map[contract.name]:
             create_ignore_list.extend(annotation.get_creation_ignore_list())
             trans_ignore_list.extend(annotation.get_trans_ignore_list())
 
-        counter = 0
 
         # Used to run annotations violation build in traces construction in parallel
         annotationsProcessor = None
@@ -392,7 +380,6 @@ class Annotary:
                                         contract.disassembly.instruction_list, create_ignore_list, trans_ignore_list,
                                         contract)
 
-        # Symbolic execution of construction and transactions
         printd("Constructor and Transaction")
 
         constr_calldata_len = get_minimal_constructor_param_encoding_len(abi_json_to_abi(contract.abi))
@@ -418,16 +405,13 @@ class Annotary:
             printd("Transaction Violations: " + str(len(reduce(lambda x, y: x + y, annotationsProcessor.trans_violations, []))))
 
         # Add found violations to the annotations they violated
-        # Todo Extract violations from only one symbolic execution
         for ign_idx in range(len(trans_ignore_list)):
             annotation = trans_ignore_list[ign_idx][4]
-            #mapping = get_sourcecode_and_mapping(trans_ignore_list[ign_idx][2]['address'], contract.disassembly.instruction_list, contract.mappings)
             annotation.add_violations(annotationsProcessor.trans_violations[ign_idx], contract, length=0,
                     vio_description="An assert with the annotations condition would fail here.")
 
         for ign_idx in range(len(create_ignore_list)):
             annotation = create_ignore_list[ign_idx][4]
-            #mapping = get_sourcecode_and_mapping(create_ignore_list[ign_idx][2]['address'], contract.creation_disassembly.instruction_list, contract.creation_mappings)
             annotation.add_violations(annotationsProcessor.create_violations[ign_idx], contract, length=0,
                                       vio_description="An assert with the annotations condition would fail here.")
 
@@ -436,8 +420,6 @@ class Annotary:
 
 
         # Build traces from the regular annotation ignoring global states
-        # create_traces = get_construction_traces(sym_creation)
-        # Todo change traces extraction in a way to use mappings to differentiate between construction and transaction
         start_time = time.time()
         create_traces, trans_traces = get_traces(sym_transactions, contract)
         printd("--- %s seconds ---" % (time.time() - start_time))
