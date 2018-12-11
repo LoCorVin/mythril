@@ -448,10 +448,19 @@ class Annotation:
 
 
     def get_dictionary(self, filename_map):
+        violations = []
+
+        # Filter out dublicate violation reports
+        for vio in [violation.get_dictionary(self.annotation_contract, filename_map) for violation in self.violations if violation.status in [Status.VSINGLE, Status.VCHAIN, Status.VDEPTH]]:
+            if vio not in violations:
+                violations.append(vio)
+
+
+
         adict = {"title": self.title, "level": get_status_string(self.status), "lvl_description": self.get_lvl_description(),
                  "ano_description": self.get_annotation_description(), "pos": self.origin[0], "line": self.origin[1], "col": self.origin[2],
                  "ano_string": self.annotation_str, "length": len(self.annotation_str),
-                 "violations": [violation.get_dictionary(self.annotation_contract, filename_map) for violation in self.violations if violation.status in [Status.VSINGLE, Status.VCHAIN, Status.VDEPTH]]}
+                 "violations": violations}
         return adict
 
     def add_violations(self, violations, contract, additional=None, length=None, vio_description="", rew_based=True, set_anchor_state=None): # Ads new violations to this annotation and sets the status, can be called multiple times
