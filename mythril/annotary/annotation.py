@@ -682,7 +682,8 @@ def mapping_and_call_return(contract, state):
     if not si_and_mapping:
         return False
     si, mapping = si_and_mapping
-    return not si.code.startswith("function ") and not si.code.startswith("contract ") and state.instruction["opcode"] in ['DELEGATECALL', 'CALLCODE', "STATICCALL", "CALL"]
+    code = si.code.strip()
+    return not code.startswith("function ") and not code.startswith("contract ") and state.instruction["opcode"] in ['DELEGATECALL', 'CALLCODE', "STATICCALL", "CALL"]
 
 
 
@@ -696,8 +697,10 @@ def is_persiting_instruction( _, state):
 
 def get_function_from_src_mapping(contract, state):
     for function in contract.functions:
-        si, mapping = get_si_from_state(contract, state.instruction['address'], state)
-        if mapping.offset >= function.start and mapping.offset < function.end:
+        si_mapping = get_si_from_state(contract, state.instruction['address'], state)
+        if not si_mapping:
+            return None
+        if si_mapping[1].offset >= function.start and si_mapping[1].offset < function.end:
             return function
 
 
