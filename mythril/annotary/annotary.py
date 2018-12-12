@@ -348,6 +348,8 @@ class Annotary:
             write_code(sol_file.filename, rew_file_code)
 
             annotation_contract = SolidityContract(sol_file.filename, contract.name, solc_args=self.solc_args)
+            annotation_contract.is_rew = True
+            contract.is_rew = False
             augment_with_ast_info(annotation_contract)
             annotation_contract.rewritings = rewritings
             annotation_contract.origin_file_code = file_code
@@ -485,11 +487,6 @@ class Annotary:
         chdir(self.wd)
         if exists(self.tmp_dir) and isdir(self.tmp_dir):
             rmtree(self.tmp_dir)
-
-    def notarize(self):
-        # Todo Instantiate an instance of Mythril, analyze and print the result
-        # Todo Find how they are storing results
-        pass
 
 def is_storage_primitive(storage):
     if storage:

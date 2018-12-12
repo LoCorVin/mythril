@@ -675,7 +675,8 @@ def specific_code_location_with_mapping(contract, state):
     if not si_and_mapping:
         return False
     si, mapping = si_and_mapping
-    return not si.code.startswith("function ") and not si.code.startswith("contract ") # and state.instruction["opcode"] in ['DELEGATECALL', 'CALLCODE']
+    code = si.code.strip()
+    return not code.startswith("function ") and not code.startswith("contract ") # and state.instruction["opcode"] in ['DELEGATECALL', 'CALLCODE']
 
 def mapping_and_call_return(contract, state):
     si_and_mapping = get_si_from_state(contract, state.instruction['address'], state)
@@ -754,11 +755,11 @@ class SetRestrictionAnnotation(Annotation):
                     si_and_mapping = get_si_from_state(self.annotation_contract, anchor_state.instruction['address'],
                                                        anchor_state)
 
-                    if not si_and_mapping: # If no mapping was found we are analyzing bytecode -> backtrack until we find the caller of said bytecode
-                        anchor_state = get_matching_state(self.annotation_contract.states, mapping_and_call_return, self.annotation_contract, state, False)
-                        if not anchor_state:
+                    if not si_and_mapping or state.environment.code.bytecode != self.annotation_contract.code: # If no mapping was found we are analyzing bytecode -> backtrack until we find the caller of said bytecode
+                        delegate_states = get_matching_state(self.annotation_contract.states, mapping_and_call_return, self.annotation_contract, state, False)
+                        if not delegate_states:
                             continue  # When violation of same structor happens in different contract and thus not violating this annotated member var
-                        anchor_state = anchor_state[0]
+                        anchor_state = get_anchor_state(self.annotation_contract, delegate_states[0]) # Only one parent cause search goes upwards though tree
 
                     if anchor_state != state:
                         state_in_delegate = True
@@ -809,6 +810,7 @@ class SetRestrictionAnnotation(Annotation):
                                         state.mstate.stack[-2], state.environment.active_account.storage._storage, state.mstate.constraints, consider_length=not self.config.set_restricted['ignore_length_writing'])
                                 if may_write_to:
 
+                                    anchor_state = get_anchor_state(self.annotation_contract, anchor_state)
                                     si_and_mapping = get_si_from_state(self.annotation_contract, anchor_state.instruction['address'], anchor_state)
 
                                     src_info, mapping = si_and_mapping
