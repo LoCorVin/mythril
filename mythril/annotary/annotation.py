@@ -21,7 +21,7 @@ from mythril.laser.ethereum.instructions import keccak_map
 ANNOTATION_START = "@"
 ANNOTATION_START_REPLACEMENT_NEW = "/*@"
 ANNOTATION_STOP = "*/"
-annotation_kw = ["check", "invariant", "set_restricted", "ethersink", "ethersource"]
+annotation_kw = ["check", "invariant", "set_restricted", "ethersink", "ethersource", "always", "never"]
 
 
 def comment_out_annotations(filename):
@@ -124,9 +124,12 @@ def get_annotated_members(contract, code, start, content, annotation_length):
 
 
 def init_annotation(contract, code, head, kw, start, end, origin, config):
-    if kw == "check":
+    if kw == "check" or kw == "always":
         content, content_prefix = get_annotation_content(code, start + len(head))
         return CheckAnnotation(code[start:(end + content_prefix)] + content + ")", get_pos_line_col(code[:start]), origin, config=config)
+    if kw == "never":
+        content, content_prefix = get_annotation_content(code, start + len(head))
+        return CheckAnnotation(code[start:(end + content_prefix)]  + content + ")", get_pos_line_col(code[:start]), origin, config=config, type=False)
     elif kw == "invariant":
         content, content_prefix = get_annotation_content(code, start + len(head))
         return InvariantAnnotation(contract, code[start:(end + content_prefix)] + content + ")",
@@ -510,26 +513,26 @@ class Annotation:
 
 class CheckAnnotation(Annotation):
 
-    def __init__(self, annotation_str, loc, origin_loc, config):
+    def __init__(self, annotation_str, loc, origin_loc, config, type=True):
         self.title = "Check annotation"
         self.config = config
         self.annotation_str = annotation_str
         self.loc = loc
         self.origin = origin_loc # Has to be calculated before
         self.rewritings = []
-
+        self.type = type
         self.content = annotation_str[(annotation_str.index("(") + 1):][::-1]
         self.content = self.content[(self.content.index(")") + 1):][::-1]
 
         Annotation.__init__(self, annotation_str)
 
     def get_annotation_description(self):
-        return "This annotation checks whether or not the specified condition '" + self.content + "' can be false at " \
-            + "this point in the program. An assert is inserted and symbolic execution tries to find falsifying " \
+        return "This annotation checks whether or not the specified condition '" + self.content + "' can be " + ("false" if self.type else "true") + " at " \
+            + "this point in the program. An assert is inserted and symbolic execution tries to find "+("falsifying" if self.type else "fulfilling")+" " \
             + "assigments. The presence of the assert statement does not influence the later execution."
 
     def rewrite_code(self, file_code, contract_code, contract_range): # In the default case it returns '' empty string, to delete it before handing it over to the compiler
-        assert_rew = expand_rew("", contract_code, ("assert(" + self.content + ");", self.loc[0]))
+        assert_rew = expand_rew("", contract_code, ("assert(" + (self.content if self.type else "!(" + self.content + ")") + ");", self.loc[0]))
         if after_implicit_block(contract_code, self.loc[0]):
             start, end = get_exp_block_brack_pos(contract_code, self.loc[0])
             self.rewritings.append(expand_rew("", contract_code, ("{", start)))
@@ -691,6 +694,11 @@ def is_not_ignored(_, state):
 def is_persiting_instruction( _, state):
     return state.instruction['opcode'] in ['STOP', 'RETURN', 'SELFDESTRUCT'] and (not hasattr(state, "next") or not state.next)
 
+def get_function_from_src_mapping(contract, state):
+    for function in contract.functions:
+        si, mapping = get_si_from_state(contract, state.instruction['address'], state)
+        if mapping.offset >= function.start and mapping.offset < function.end:
+            return function
 
 
 class SetRestrictionAnnotation(Annotation):
@@ -753,6 +761,8 @@ class SetRestrictionAnnotation(Annotation):
                         state_in_delegate = True
 
                     in_constructor = isinstance(anchor_state.current_transaction, ContractCreationTransaction)
+                    mapfunction = get_function_from_src_mapping(self.contract, anchor_state)
+
                     if not in_constructor:
                         function = get_function_from_constraints(self.contract, anchor_state.mstate.constraints, in_constructor)
                         if function:
@@ -776,6 +786,10 @@ class SetRestrictionAnnotation(Annotation):
                         or self.contract.name in self.restricted_f or any([restriction.startswith(self.contract.name + "(") for restriction in self.restricted_f]))\
                         or state_in_delegate and [hash for hash in extract_possible_hashes(state, self.annotation_contract.name) if hash in delegate_hashes] \
                         or state.environment.active_function_name in delegate_res_signatures:
+                        continue
+
+                        # Skipp if function is somehow mentioned in the restricted list
+                    if mapfunction and (mapfunction.name in self.restricted_f or mapfunction.signature in res_signatures):
                         continue
 
                     if unresolved_delegatecall:

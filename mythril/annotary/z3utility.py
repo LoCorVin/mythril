@@ -67,6 +67,10 @@ def are_z3_satisfiable(z3_constraints):
 
 def simplify_constraints_individually(constraints):
     simp_const = []
+    if False in constraints:
+        constraints = []
+    else:
+        constraints = [const for const in constraints if type(const) != bool]
     for const in constraints:
         simp_const.append(simplify(const))
     return simp_const

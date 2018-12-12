@@ -542,12 +542,15 @@ class Instruction:
             while i < index + length:
                 if type(state.memory[i]) == BitVecRef:
                     if i - last > 0:
-                        if result == None:
-                            result = BitVecVal(util.concrete_int_from_bytes(data, 0), len(data)*8)
+                        if len(data) > 0:
+                            if result == None:
+                                result = BitVecVal(util.concrete_int_from_bytes(data, 0), len(data)*8)
+                            else:
+                                result = Concat(result, BitVecVal(util.concrete_int_from_bytes(data, 0), len(data)*8)) # Todo decide on concat order
+                        if result is None:
+                            result = state.memory[i]
                         else:
-                            result = Concat(result, BitVecVal(util.concrete_int_from_bytes(data, 0), len(data)*8)) # Todo decide on concat order
-
-                        result = Concat(result, state.memory[i])
+                            result = Concat(result, state.memory[i])
                     else:
                         result = state.memory[i]
                     data = b''
