@@ -26,6 +26,7 @@ from multiprocessing.dummy import Pool as ThreadPool
 from concurrent.futures import ThreadPoolExecutor
 import platform
 import time
+from .print_time import printt, start_meassure
 
 from mythril.annotary.config import Config
 
@@ -268,7 +269,6 @@ class Annotary:
 
     def parse_annotations(self):
         struct_map = get_struct_map(flatten([contract.solidity_files for contract in self.contracts]))
-        # Todo from which contract to parse?
         for contract in self.contracts:
             if self.contract_name and contract.name != self.contract_name:
                 continue
@@ -280,8 +280,6 @@ class Annotary:
 
 
             augment_with_ast_info(contract)
-
-            # Todo Saving Storage Mapping with mappings in contract might not be necessary
             self.storage_map[contract.name] = extract_storage_map(contract, struct_map)
             contract.storage_map = self.storage_map[contract.name]
 
@@ -300,6 +298,10 @@ class Annotary:
                     if annotation:
                         self.annotation_map[contract.name].append(annotation)
                     annot_iter = next(annot_iterator, None)
+
+            # Todo ELiminate from Annotary after evaluation
+            if not contract.name in self.annotation_map:
+                self.annotation_map[contract.name] = []
 
 
 
@@ -392,9 +394,14 @@ class Annotary:
         if self.max_depth:
             self.config.mythril_depth = self.max_depth
         printd("Sym Exe: " + str(contract.name))
-        start = time.time()
+
+
+        start_meassure()
         sym_transactions = SymExecWrapper(contract, self.address, laser_strategy, dynloader, max_depth=self.config.mythril_depth,
-                                          prepostprocessor=annotationsProcessor, code_extension=sym_code_extension) # Todo Mix the annotation Processors or mix ignore listst
+                                          prepostprocessor=annotationsProcessor, code_extension=sym_code_extension)
+        printt("Symbolic Execution")
+
+
         contract.states = []
 
         contract.states = sym_transactions.laser.state_id_assigner.states
@@ -420,10 +427,13 @@ class Annotary:
         for annotation in self.annotation_map[contract.name]:
             annotation.build_violations(sym_transactions)
 
+        printt("BUILD VIOLATIONS")
+
 
         # Build traces from the regular annotation ignoring global states
         start_time = time.time()
         create_traces, trans_traces = get_traces(sym_transactions, contract)
+        printt("BUILD TRACES")
         printd("--- %s seconds ---" % (time.time() - start_time))
 
         return create_traces, trans_traces
@@ -465,6 +475,7 @@ class Annotary:
                 annotation.status = status
 
             printd("Stop")
+        printt("CHECK ANNOTATONS")
         # Todo Maybe filter violations if the annotation is only broken if it was broken before
 
         # Todo Set status, perform trace chaining strategy. Update Status

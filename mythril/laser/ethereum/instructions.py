@@ -959,6 +959,7 @@ class Instruction:
             new_state = copy(global_state)
             new_state.mstate.depth += 1
             new_state.mstate.constraints.append(negated)
+            # print("ndepth: " + str(new_state.mstate.depth))
             states.append(new_state)
         else:
             # print(condition)
@@ -981,6 +982,8 @@ class Instruction:
                 new_state = copy(global_state)
                 new_state.mstate.pc = index
                 new_state.mstate.depth += 1
+
+                # print("pdepth: " + str(new_state.mstate.depth))
                 new_state.mstate.constraints.append(condi)
 
                 states.append(new_state)

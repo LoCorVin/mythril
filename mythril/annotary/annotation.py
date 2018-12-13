@@ -754,12 +754,15 @@ class SetRestrictionAnnotation(Annotation):
                     anchor_state = state
                     si_and_mapping = get_si_from_state(self.annotation_contract, anchor_state.instruction['address'],
                                                        anchor_state)
-
-                    if not si_and_mapping or state.environment.code.bytecode != self.annotation_contract.code: # If no mapping was found we are analyzing bytecode -> backtrack until we find the caller of said bytecode
+                    in_constructor = isinstance(anchor_state.current_transaction, ContractCreationTransaction)
+                    if not si_and_mapping or \
+                        in_constructor and state.environment.code.bytecode != self.annotation_contract.creation_code or\
+                        not in_constructor and state.environment.code.bytecode != self.annotation_contract.code:
                         delegate_states = get_matching_state(self.annotation_contract.states, mapping_and_call_return, self.annotation_contract, state, False)
                         if not delegate_states:
                             continue  # When violation of same structor happens in different contract and thus not violating this annotated member var
                         anchor_state = get_anchor_state(self.annotation_contract, delegate_states[0]) # Only one parent cause search goes upwards though tree
+
 
                     if anchor_state != state:
                         state_in_delegate = True

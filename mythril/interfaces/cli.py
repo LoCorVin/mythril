@@ -10,6 +10,8 @@ import json
 import sys
 import argparse
 
+from mythril.annotary.print_time import start_meassure, printend
+
 # logging.basicConfig(level=logging.DEBUG)
 
 from mythril.exceptions import CriticalError, AddressNotFoundError
@@ -28,6 +30,7 @@ def exit_with_error(format, message):
 
 
 def main():
+    start_meassure()
     parser = argparse.ArgumentParser(description='Security analysis of Ethereum smart contracts')
     parser.add_argument("solidity_file", nargs='*')
 
@@ -257,6 +260,7 @@ def main():
             annotary.parse_annotations()
             annotary.check_annotations()
             print(annotary.get_annotation_json())
+            printend()
             annotary.delete_tmp_dir()
 
         elif args.statespace_json:

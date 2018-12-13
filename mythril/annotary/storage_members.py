@@ -215,7 +215,7 @@ def extract_storage_map(contract, struct_map):
     storage_map = {}
     slot_counter = 0
     bit_counter = 0
-    for member in storage_members:
+    for member in [member for member in storage_members if not member.constant]:
         m_type = member.type
         m_info, slot_counter, bit_counter = get_storage_mapping_for_types(contract.ast, struct_map, m_type, slot_counter, bit_counter)
         storage_map[member.declaring_contract + "." + member.name] = m_info
@@ -344,7 +344,8 @@ def get_storage_mapping_for_types(contract, struct_map, m_type, slot_counter=0, 
         # Todo here we should inspect if struct_types have the expected format: list of types
         nested_m_info, slot_counter, bit_counter = get_storage_mapping_for_types(contract, struct_map, struct_types, slot_counter, bit_counter)
         m_info.extend(nested_m_info)
-        return m_info, new_slot(slot_counter, bit_counter)
+        slot_counter, bit_counter = new_slot(slot_counter, bit_counter)
+        return m_info, slot_counter, bit_counter
 
     if m_type.startswith("contract"):
         m_type = 'address'
@@ -365,7 +366,7 @@ def get_storage_mapping_for_types(contract, struct_map, m_type, slot_counter=0, 
         mappings, slot_counter, bit_counter = get_primitive_storage_mapping(slot_counter, bit_counter, post)
         m_info.extend(mappings)
     elif m_type.startswith("bytes"):
-        byte_len = m_type[5:]
+        byte_len = int(m_type[5:])
 
 
         mappings, slot_counter, bit_counter = get_primitive_storage_mapping(slot_counter, bit_counter, byte_len * 8)
