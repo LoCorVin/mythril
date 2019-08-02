@@ -5,10 +5,9 @@ from mythril.annotary.sn_utils import flatten
 from mythril.annotary.debugc import printd
 from mythril.laser.ethereum.transaction import ContractCreationTransaction
 import re
-from mythril.annotary.z3utility import are_satisfiable, simplify_constraints, simplify_z3_constraints, \
-    extract_sym_names, filter_for_t_variable_data
+from mythril.annotary.z3utility import are_satisfiable, simplify_constraints, simplify_z3_constraints
 from mythril.annotary.z3wrapper import Slot, Constraint
-from .sn_utils import get_matching_state, get_matching_state_multisearch
+from .sn_utils import get_matching_state
 
 simp_and_sat = False
 
@@ -25,19 +24,20 @@ def deep_bitvec_substitute(obj, subs_map):
                 sym_vars.extend(deep_bitvec_substitute(c, subs_map))
         return sym_vars
 
-# Todo constructor mit den intentet initvalues versorgen
 
 def has_associated_function(c, s):
     return get_function_from_constraints(c, s.mstate.constraints,
                 isinstance(s.current_transaction, ContractCreationTransaction)) is not None
 
+
 def clean_primitives(storage):
     cleaned_storage = {}
-    for k,v in storage._storage.items():
+    for k, v in storage._storage.items():
         if "storage[" + str(k) + "]" != str(v).replace(" ", ""):
             cleaned_storage[k] = v
     storage._storage = cleaned_storage
     return storage
+
 
 class FunctionDummy:
 
@@ -47,14 +47,15 @@ class FunctionDummy:
         self.isConstructor = isConstructor
         self.visibility = visibility
 
+
 class TransactionTrace:
 
     def __init__(self, state, contract=None, lvl=1):
-        # self.storage = {k: simplify(v) for k,v in storage }
         constraints = state.mstate.constraints
         storage = clean_primitives(state.environment.active_account.storage)
         self.constraints = simplify_constraints_individually(constraints) # Todo not necessary in the case of violations
         self.functions = []
+        self.subs_map = {}
         if contract:
             s = get_matching_state(contract.states, has_associated_function, contract,state, False, "BACKWARD")
             if s:
@@ -66,7 +67,6 @@ class TransactionTrace:
                 else:
                     self.functions = [FunctionDummy("function", "function()", False, "public")]
 
-        # eliminate all constraints that only contain names not in the set of names from storage
         self.constraints = simplify_z3_constraints(self.constraints) # Todo simplification of the sum of constraints
 
         self.state = state
@@ -77,12 +77,12 @@ class TransactionTrace:
 
         self.tran_constraints = deepcopy(self.constraints)
         self.lvl = lvl
-        self.sym_names = flatten(self.extract_sym_names_from_storage())
+        self.tran_names = flatten(self.extract_tran_names_from_storage())
 
         # Constraints on storage keys to are necessary
         self.tran_constraints = [tra_const for tra_const in self.tran_constraints if tra_const.slot_names]
 
-        self.sym_names.extend(flatten(self.extract_sym_names_from_constraints()))
+        self.tran_names.extend(flatten(self.extract_tran_names_from_constraints()))
         if lvl == 1:
             self.set_transaction_idx()
 
@@ -124,7 +124,7 @@ class TransactionTrace:
     def get_storage_subs_map(self):
         if hasattr(self, "subs_map"):
             return self.subs_map
-        # Todo recompute on combination
+        # Todo recompute only on combination
         self.subs_map = {}
         for slot_idx, slot in self.storage.items():
             if not eq(slot.slot, BitVec("storage[" + str(slot_idx) + "]", 256)):
@@ -138,7 +138,6 @@ class TransactionTrace:
     def update_storage_subs_map(self):
         del self.subs_map
         self.get_storage_subs_map()
-
 
     def __str__(self):
         return str(self.as_dict())
@@ -158,36 +157,36 @@ class TransactionTrace:
     def add_transaction_idx(self, offset):# Delete if no error shows
 
         new_names = []
-        for name in self.sym_names:
+        for name in self.tran_names:
             matched_name = re.search(r't([0-9]+)(_.*)', name)
             num = int(matched_name.group(1)) + offset
             new_names.append("t" + str(num) + matched_name.group(2))
-        repl_tup = list(zip(self.sym_names, new_names))
+        repl_tup = list(zip(self.tran_names, new_names))
 
         self.substitute_bv_names(repl_tup)
 
-        self.sym_names = new_names
+        self.tran_names = new_names
 
     def get_transaction_depth_repl_tuples(self, offset):
         new_names = []
-        for name in self.sym_names:
+        for name in self.tran_names:
             matched_name = re.search(r't([0-9]+)(_.*)', name)
             num = int(matched_name.group(1)) + offset
             new_names.append("t" + str(num) + matched_name.group(2))
-        repl_tup = list(zip(self.sym_names, new_names))
+        repl_tup = list(zip(self.tran_names, new_names))
 
         # self.substitute_bv_names(repl_tup)
 
-        self.sym_names = new_names
+        self.tran_names = new_names
         return repl_tup
 
     def set_transaction_idx(self):
         repl_tup = []
-        new_sym_names = []
-        for name in self.sym_names:
+        new_tran_names = []
+        for name in self.tran_names:
             repl_tup.append((name, "t1_" + name))
-            new_sym_names.append("t1_" + name)
-        self.sym_names = new_sym_names
+            new_tran_names.append("t1_" + name)
+        self.tran_names = new_tran_names
         self.substitute_bv_names(repl_tup)
 
     # Todo merge this (transaction depth add) subs with the other(storage slot) subs
@@ -199,43 +198,19 @@ class TransactionTrace:
         for c_idx in range(len(self.tran_constraints)):
             self.tran_constraints[c_idx].substitute(subs_tuples)
 
-    def extract_sym_names_from_storage(self):
-        return [slot.sym_names for _, slot in self.storage.items()]
-        sym_names = []
-        sum = 0
-        for k,v in self.storage.items():
-            vs_sym_names = extract_sym_names(v)
-            sym_names.extend(vs_sym_names)
-            if vs_sym_names:
-                sum += 1
-        printd("Extracted sym storage: " + str(sum) + " " + str( float(len(self.storage) - sum) / len(self.storage)))
-        return filter_for_t_variable_data(sym_names)
+    def extract_tran_names_from_storage(self):
+        return [slot.tran_names for _, slot in self.storage.items()]
 
-    def extract_sym_names_from_constraints(self):
-        return [const.sym_names for const in self.constraints]
-        sym_names = []
-        sum = 0
-        for v_idx in range(len(self.tran_constraints)):
-            vs_sym_names = extract_sym_names(self.tran_constraints[v_idx])
-            sym_names.extend(vs_sym_names)
-            if vs_sym_names:
-                sum += 1
-        printd("Extracted sym constraints: " + str(sum) + " " + str( float(len(self.storage) - sum) / len(self.storage)))
-        return filter_for_t_variable_data(sym_names) # Todo Check whether here it is the right choice too, to filter ...
-
-    """
-          Either do only deep checking here and use the proper trace or storage_slot reduction in the apply function. Or do
-          both here.
-      """
+    def extract_tran_names_from_constraints(self):
+        return [const.tran_names for const in self.constraints]
 
     def deep_equals(trace_lvl1, trace_lvl2):
-        return set(trace_lvl1) == set(trace_lvl2) # Todo Impelement an ACTUAL deep comparison
+        # Todo Impelement a better deep comparison
+        return set(trace_lvl1) == set(trace_lvl2)
 
     def simplify_storage(self):
-        for k,v in self.storage.items():
-            # Todo explore the arguments of this storage simplification in z3 to find ways to further simplify and to
-            # sort this expressions for equality comparison
-            self.storage[k].simplify()
+        for key, value in self.storage.items():
+            self.storage[key].simplify()
 
     """
         Applies the new trace tt on a possibly even changed trace self.
@@ -246,10 +221,10 @@ class TransactionTrace:
         new_trace = deepcopy(tt)
         subs_map = list(map(lambda x: (x[0], BitVec(x[1], 256), ([x[1]], [])), new_trace.get_transaction_depth_repl_tuples(self.lvl)))
 
-        subs_map.extend(list(map(lambda x: ("storage[" + str(x[0]) + "]", x[1].slot, (x[1].sym_names, x[1].slot_names)), self.storage.items()))) # Build this map only once
+        subs_map.extend(list(map(lambda x: ("storage[" + str(x[0]) + "]", x[1].slot, (x[1].tran_names, x[1].slot_names)), self.storage.items()))) # Build this map only once
 
         for k,v in new_trace.storage.items():
-            new_trace.storage[k].substitute(subs_map)  # Todo substitute only if necessary
+            new_trace.storage[k].substitute(subs_map)
 
         # Copies all storage entries that are not changed in the newer trace
         for k in self.storage.keys():
@@ -257,10 +232,10 @@ class TransactionTrace:
                 new_trace.storage[k] = deepcopy(self.storage[k])
 
         for c_idx in range(len(new_trace.tran_constraints)):
-            new_trace.tran_constraints[c_idx].substitute(subs_map) # Todo only substitute if necessary
+            new_trace.tran_constraints[c_idx].substitute(subs_map)
         new_trace.tran_constraints.extend(deepcopy(self.tran_constraints))
         new_trace.lvl += self.lvl
-        new_trace.sym_names.extend(deepcopy(self.sym_names))
+        new_trace.tran_names.extend(deepcopy(self.tran_names))
         # self can be omitted (e.g. when related storage locations were overwritten)
         new_trace.functions = self.functions + tt.functions
         if simp_and_sat:
@@ -281,8 +256,6 @@ class TransactionTrace:
         return list(filter(lambda t: not t is None, combined_traces))
 
     def apply_exact_trace_levels(self, traces, depth):
-        # Todo maybe some faster trace build not building one level at a time to e.g.
-        # Todo reach level 17 but build 2, then 4, then 8 and then 16 then 17
         trace_lvl_n = [self]
         for i in range(depth):
             trace_lvl_np1 = []
@@ -306,12 +279,5 @@ class TransactionTrace:
                     return traces_up_to
             traces_up_to.append(trace_lvl_np1)
         return traces_up_to
-
-    # Todo Maybe implement a function that checks whether two traces are combinable before creating objekts, adv. in
-    # case they are not the object creation doe not have to be done. Investigate whether a suicide trace completely
-    # stopes the contract from being executable. In that case a suicided transaction also is not combinable with
-    # successive transactions.
-
-    # Todo write a function that allows to specify a function/invocable to explore the tracechain space in DFS manner
 
 

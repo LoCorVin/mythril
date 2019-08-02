@@ -3,7 +3,6 @@ from re import sub
 from mythril.annotary.codeparser import find_matching_closed_bracket, get_newlinetype
 
 
-
 class Rewriting:
 
     def __init__(self, gname, text, pos, line, col):
@@ -23,9 +22,9 @@ def apply_rewriting(code, rewriting):
     return code[:rewriting.pos] + rewriting.text + code[rewriting.pos:]
 
 
-
 def get_line_count(text):
     return text.count(get_newlinetype(text))
+
 
 def expand_rew(function_name, code, rew_tuple):
     pos = rew_tuple[1]
@@ -36,22 +35,26 @@ def expand_rew(function_name, code, rew_tuple):
         col = pos
     return Rewriting(function_name, rew_tuple[0], pos, nr_nwls, col)
 
+
 def get_editor_indexed_rewriting(rewriting):
     return Rewriting(rewriting.gname, rewriting.text, rewriting.pos, rewriting.line + 1, rewriting.col)
+
 
 def get_code(filename):
     with open(filename, 'r', encoding="utf-8") as file:
         return file.read()
 
+
 def write_code(filename, code):
     with open(filename, 'w', encoding="utf-8") as file:
         file.write(code)
 
+
 def get_lines(filename):
-    lines = []
     with open(filename, encoding="utf-8") as file:
-        lines= file.readlines()
+        lines = file.readlines()
     return lines
+
 
 def substr_first(string, subs1, subs2):
     if subs1 in string and subs2 in string:
@@ -62,18 +65,6 @@ def substr_first(string, subs1, subs2):
         return subs2
     return None
 
-#def current_line_contains(string, sub):
-#    if sub not in string:
-#        return False
-#    newline_idx = len(string)
-#    for newline in newlines:
-#        if newline in string:
-#            newline_idx = min(newline_idx, string.index(newline))
-#    if newline_idx == len(string):
-#        return True
-#    return string.index(sub) <= newline_idx
-
-
 
 def remove_solidity_comments(code):
     code = sub(escape('/*') + r'(.*?)\*/', r"", code, flags=DOTALL)
@@ -81,6 +72,7 @@ def remove_solidity_comments(code):
     code = sub(escape('//') + r'(.*?)\n', r"\n", code, flags=DOTALL)
     code = sub(escape('//') + r'(.*?)\r', r"\r", code, flags=DOTALL)
     return code
+
 
 def replace_regex_with_whitespace(regex, code):
     matches = finditer(regex, code, flags=DOTALL)
@@ -102,7 +94,6 @@ def replace_comments_with_whitespace(code):
     code = replace_regex_with_whitespace(escape('/*') + r'(.*?)' + escape('*/'), code)
     code = replace_regex_with_whitespace(escape('//') + '(.*?)(\r\n|\n|\r)', code)
     return code
-
 
 
 def after_implicit_block(origin_code, idx):
@@ -130,8 +121,8 @@ def after_implicit_block(origin_code, idx):
 
         # if one that needs () get end of ()
 
-
     return True
+
 
 def get_exp_block_brack_pos(origin_code, idx):
     origin_code = replace_comments_with_whitespace(origin_code)

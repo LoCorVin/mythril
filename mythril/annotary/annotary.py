@@ -192,14 +192,11 @@ def get_sorting_priority(rew_text):
     return 8
 
 
-
 def get_contract_code(contract):
     crange = find_contract_idx_range(contract)
     contract_code = get_containing_file(contract).data[crange[0]:crange[2]]
     return contract_code
-"""
-    Here it might be better to split annotations into the containing constraint an the prefix and sufix
-"""
+
 
 class Annotary:
 
@@ -266,18 +263,15 @@ class Annotary:
     def get_lineno_stop_inst(self):
         pass
 
-
     def parse_annotations(self):
         struct_map = get_struct_map(flatten([contract.solidity_files for contract in self.contracts]))
         for contract in self.contracts:
             if self.contract_name and contract.name != self.contract_name:
                 continue
 
-
             contract_file = get_containing_file(contract)
             contract.contract_range = find_contract_idx_range(contract)
             code = contract_file.data[contract.contract_range[0]:contract.contract_range[2]]
-
 
             augment_with_ast_info(contract)
             self.storage_map[contract.name] = extract_storage_map(contract, struct_map)
@@ -299,11 +293,8 @@ class Annotary:
                         self.annotation_map[contract.name].append(annotation)
                     annot_iter = next(annot_iterator, None)
 
-            # Todo ELiminate from Annotary after evaluation
             if not contract.name in self.annotation_map:
                 self.annotation_map[contract.name] = []
-
-
 
     def build_annotated_contracts(self):
         for contract in self.contracts:

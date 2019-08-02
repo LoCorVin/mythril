@@ -33,7 +33,7 @@ def contains_storage_reference(trace):
 def zeroize_constraints(constraints):
     for constraint in constraints:
         constraint.constraint = substitute(constraint.constraint, [(BitVec(slot_name, 256), BitVecVal(0, 256)) for slot_name in constraint.slot_names])
-        constraint.sym_names = [sym_name for sym_name in constraint.sym_names if sym_name in constraint.slot_names]
+        constraint.tran_names = [sym_name for sym_name in constraint.tran_names if sym_name in constraint.slot_names]
         constraint.slot_names = []
 
 
@@ -42,7 +42,7 @@ def zeroize_storage_vars(trace):
     zeroize_constraints(trace.tran_constraints)
     for slot_idx, slot in trace.storage.items():
         trace.storage[slot_idx].slot = substitute(slot.slot, [(BitVec(slot_name, 256), BitVecVal(0, 256)) for slot_name in slot.slot_names])
-        slot.sym_names = [sym_name for sym_name in slot.sym_names if sym_name in slot.slot_names]
+        slot.tran_names = [sym_name for sym_name in slot.tran_names if sym_name in slot.slot_names]
         slot.slot_names = []
 
 
