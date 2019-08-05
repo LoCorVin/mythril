@@ -14,10 +14,14 @@ from .z3utility import extract_sym_names, get_bv
 type_alias = {"address": "int160", "bool": "int8", "byte": "bytes1", "ufixed": "ufixed128x18", "fixed": "fixed128x18",
               "int": "int256", "uint":"uint256"}
 
-'''
-    Copied and modified from laser evm, must have the same behaviour
-'''
+
 def get_storage_slot(index, storage):
+    """
+    Returns the content of a specific storage slo
+    :param index:
+    :param storage:
+    :return:
+    """
         try:
             index = get_concrete_int(index)
         except AttributeError:
@@ -46,14 +50,15 @@ class SolidityMember:
         self.src = m_ast['src'].split(':')
         self.src = list(map(lambda x: int(x), self.src))
 
+
 class StorageSlot:
     # Constraint Slot, irrelevant for ConcretSlot and MappingSlot, important for length constraints on the datatypes
     def may_write_to(self, z3_index, z3_value, storage, constraint_list, consider_length):
         raise NotImplementedError("Unimplemented Function of Abstract class")
 
-
     def may_read_from(self, z3_index, z3_value, storage, constraint_list):
         raise NotImplementedError("Unimplemented Function of Abstract class")
+
 
 class ConcretSlot(StorageSlot):
 
@@ -121,9 +126,9 @@ class ConcretSlot(StorageSlot):
 
         return False, None
 
-
     def may_read_from(self, z3_index, z3_value, storage, constraint_list):
         pass
+
 
 class MappingSlot(StorageSlot):
 
@@ -158,6 +163,7 @@ class MappingSlot(StorageSlot):
     def may_read_from(self, z3_index, z3_value, storage, constraint_list):
         pass
 
+
 class ArraySlot(StorageSlot):
 
     def __init__(self, slot_counter):
@@ -174,7 +180,6 @@ class ArraySlot(StorageSlot):
         slot_hash = utils.sha3(utils.bytearray_to_bytestr(util.concrete_int_to_bytes(self.slot_counter)))
         slot_hash = str(BitVecVal(util.concrete_int_from_bytes(slot_hash, 0), 256))
 
-
         z3_index_str = str(z3_index).replace("\n", "")
         if z3_index_str.startswith(slot_hash):
             if z3_index_str.endswith(slot_hash) or z3_index_str[len(slot_hash):].startswith(" +"):
@@ -189,6 +194,7 @@ class ArraySlot(StorageSlot):
 
     def may_read_from(self, z3_index, z3_value, storage, constraint_list):
         pass
+
 
 class BytesSlot(StorageSlot):
 
@@ -230,6 +236,7 @@ def advance_counters(slot_counter, bit_counter):
         bit_counter = 0
     return slot_counter, bit_counter
 
+
 def new_slot(slot_counter, bit_counter):
     if bit_counter > 0:
         slot_counter += 1
@@ -241,6 +248,7 @@ def add_counters(slot_counter, bit_counter, needed_bits):
     slot_counter += int((bit_counter + needed_bits) / 256)
     bit_counter = bit_counter + needed_bits % 256
     return slot_counter, bit_counter
+
 
 def get_primitive_storage_mapping(slot_counter, bit_counter, needed_bits):
     mappings = []
@@ -257,10 +265,7 @@ def get_primitive_storage_mapping(slot_counter, bit_counter, needed_bits):
     if len(mappings) > 0:
         slot_counter, bit_counter = advance_counters(mappings[-1].slot_counter, mappings[-1].bit_counter + mappings[-1].bitlength)
 
-
     return mappings, slot_counter, bit_counter
-
-
 
 
 def add_multiple_items_to_counters(slot_counter, bit_counter, bits_p_elem, amount_elements):
@@ -316,8 +321,6 @@ def get_storage_mapping_for_types(contract, struct_map, m_type, slot_counter=0, 
 
         dimension = int(dimension[1:-1])
 
-        # Todo special case, if we can compute a static size of something int[100], this can be done faster then 100* calculate need of int
-
         for _ in range(dimension):
             nested_m_info, slot_counter, bit_counter = get_storage_mapping_for_types(contract,struct_map, m_type, slot_counter, bit_counter)
             m_info.extend(nested_m_info)
@@ -341,7 +344,6 @@ def get_storage_mapping_for_types(contract, struct_map, m_type, slot_counter=0, 
         except KeyError:
             raise SyntaxError("Unknown struct that cannot be resolved: " + struct_abs_name)
         slot_counter, bit_counter = new_slot(slot_counter, bit_counter)
-        # Todo here we should inspect if struct_types have the expected format: list of types
         nested_m_info, slot_counter, bit_counter = get_storage_mapping_for_types(contract, struct_map, struct_types, slot_counter, bit_counter)
         m_info.extend(nested_m_info)
         slot_counter, bit_counter = new_slot(slot_counter, bit_counter)
